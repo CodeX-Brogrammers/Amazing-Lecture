@@ -9,22 +9,22 @@ def _check_included_intent_names(alice: AliceRequest, intent_names: list[str]):
 
 class ConfirmFilter(Filter):
     def check(self, alice: AliceRequest):
-        return _check_included_intent_names(alice, ["YANDEX.CONFIRM"])
+        return _check_included_intent_names(alice, ["YANDEX.CONFIRM", "AGREE"])
 
 
 class RejectFilter(Filter):
     def check(self, alice: AliceRequest):
-        return _check_included_intent_names(alice, ["YANDEX.REJECT"])
+        return _check_included_intent_names(alice, ["YANDEX.REJECT", "REFUSAL"])
 
 
 class RepeatFilter(Filter):
     def check(self, alice: AliceRequest):
-        return _check_included_intent_names(alice, ["YANDEX.REPEAT"])
+        return _check_included_intent_names(alice, ["YANDEX.REPEAT", "REPEAT"])
 
 
 class HelpFilter(Filter):
     def check(self, alice: AliceRequest):
-        return _check_included_intent_names(alice, ["YANDEX.HELP"])
+        return _check_included_intent_names(alice, ["YANDEX.HELP", "HELP"])
 
 
 class StartFilter(Filter):
