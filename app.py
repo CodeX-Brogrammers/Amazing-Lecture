@@ -17,7 +17,7 @@ import filters
 
 WEBHOOK_URL_PATH = '/post'  # webhook endpoint
 
-WEBAPP_HOST = 'localhost'
+WEBAPP_HOST = '0.0.0.0'
 WEBAPP_PORT = 5000
 
 logging.basicConfig(format=u'%(filename)s [LINE:%(lineno)d] #%(levelname)-8s [%(asctime)s]  %(message)s',
