@@ -134,9 +134,10 @@ async def handle_reject(alice_request: AliceRequest):
 # TODO: 
 # 1. Отображать статистику игрока ака "Процент успешности"
 @dp.request_handler()
-async def handle_stop(alice_request: AliceRequest):
-    answer = "🌚"
-    return alice_request.response(answer, tts=answer + '<speaker audio="alice-music-drum-loop-1.opus">')
+async def handle_intent(alice_request: AliceRequest):
+    data = alice_request.request.nlu._raw_kwargs
+    answer = f"Intents: {data['intents']}\nTokens: {data['tokens']}"
+    return alice_request.response(answer, tts='ДА<speaker audio="alice-sounds-things-explosion-1.opus">')
 
 
 @dp.errors_handler()
