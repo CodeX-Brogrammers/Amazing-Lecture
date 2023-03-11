@@ -133,7 +133,7 @@ async def handle_reject(alice_request: AliceRequest):
 
 # TODO: 
 # 1. Отображать статистику игрока ака "Процент успешности"
-@dp.request_handler()
+@dp.request_handler(state=None)
 async def handle_intent(alice_request: AliceRequest):
     data = alice_request.request.nlu._raw_kwargs
     answer = f"Intents: {data['intents']}\nTokens: {data['tokens']}"
