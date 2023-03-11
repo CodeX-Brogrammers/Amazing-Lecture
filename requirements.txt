@@ -1,1 +1,2 @@
 aioAlice==1.5.1
+beanie==1.17.0

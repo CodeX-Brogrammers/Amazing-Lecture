@@ -2,11 +2,12 @@ from typing import Callable
 from random import choice
 import logging
 
-from aioalice import Dispatcher, get_new_configured_app, types
 from aioalice.utils.helper import Helper, HelperMode, Item
-from aioalice.dispatcher import MemoryStorage
-from aioalice.types import AliceRequest
+from aioalice import Dispatcher, get_new_configured_app
+from aioalice.dispatcher.storage import MemoryStorage
+from aioalice.types import AliceRequest, Button
 from aiohttp import web
+import attr
 
 import filters
 
@@ -17,21 +18,36 @@ import filters
 
 WEBHOOK_URL_PATH = '/post'  # webhook endpoint
 
-WEBAPP_HOST = '0.0.0.0'
+WEBAPP_HOST = 'localhost'
 WEBAPP_PORT = 5000
 
 logging.basicConfig(format=u'%(filename)s [LINE:%(lineno)d] #%(levelname)-8s [%(asctime)s]  %(message)s',
                     level=logging.INFO)
 
-# Создаем экземпляр диспетчера и подключаем хранилище в памяти
-dp = Dispatcher(storage=MemoryStorage())
-
-OK_Button = types.Button('Ладно')
-REJECT_Button = types.Button('Нет')
-REPEAT_Button = types.Button('Повтори')
+OK_Button = Button('Ладно')
+REJECT_Button = Button('Нет')
+REPEAT_Button = Button('Повтори')
 BUTTONS = [OK_Button, REJECT_Button, REPEAT_Button]
 
 POSSIBLE_ANSWER = ("Начинаем ?", "Готовы начать ?", "Поехали ?")
+
+
+# Создаем экземпляр диспетчера и подключаем хранилище в памяти
+
+
+dp = Dispatcher(storage=MemoryStorage())
+app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
+
+
+@attr.attrs
+class RequestState:
+    session = attr.attrib(type=dict)
+    user = attr.attrib(type=dict)
+    application = attr.attrib(type=dict)
+
+    @classmethod
+    def from_request(cls, alice: AliceRequest):
+        return cls(**alice._raw_kwargs["state"])
 
 
 class GameStates(Helper):
@@ -129,6 +145,32 @@ async def handle_reject_game(alice_request: AliceRequest):
 async def handle_reject(alice_request: AliceRequest):
     answer = "Ну и ладно"
     return alice_request.response(answer)
+
+
+@dp.request_handler(contains="добавь", state="*")
+async def handler_set_score(alice: AliceRequest):
+    state = RequestState.from_request(alice)
+    state.user["score"] += 1
+    return alice.response(f"Score: {state.user['score']}", session_state={"test": True}, user_state_update=state.user)
+
+
+@dp.request_handler(contains="убавь", state="*")
+async def handler_set_score(alice: AliceRequest):
+    state = RequestState.from_request(alice)
+    state.user["score"] -= 1
+    return alice.response(f"Score: {state.user['score']}", session_state={"test": True}, user_state_update=state.user)
+
+
+@dp.request_handler(filters.ScoreFilter(filters.Operation.LE, 0), contains="подска")
+async def handler(alice: AliceRequest):
+    return alice.response("Нет🌝")
+
+
+@dp.request_handler(filters.ScoreFilter(filters.Operation.GE, 1), contains="подска")
+async def handler(alice: AliceRequest):
+    state = RequestState.from_request(alice)
+    state.user['score'] -= 1
+    return alice.response("}{🌚р🌚ш🌚", user_state_update=state.user)
 
 
 # TODO: 

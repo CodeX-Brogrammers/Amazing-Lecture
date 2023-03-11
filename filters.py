@@ -1,5 +1,23 @@
+from operator import le, ge, lt, gt, eq
+import enum
+from typing import Callable
+
 from aioalice.dispatcher.filters import Filter
 from aioalice.types import AliceRequest
+
+
+class Operation(enum.Enum):
+    LE = le
+    GE = ge
+    LT = lt
+    GT = gt
+    EQ = eq
+
+
+class StateType(enum.Enum):
+    SESSION = "session"
+    USER = "user"
+    APPLICATION = "application"
 
 
 def _check_included_intent_names(alice: AliceRequest, intent_names: list[str]):
@@ -30,3 +48,14 @@ class HelpFilter(Filter):
 class StartFilter(Filter):
     def check(self, alice: AliceRequest):
         return alice.session.new
+
+
+class ScoreFilter(Filter):
+    def __init__(self, operation: Operation, count: int, state_type: StateType = StateType.USER):
+        self.count = count
+        self.operation: Callable[[int, int], bool] = operation.value
+        self.state_type = state_type.value
+
+    def check(self, alice: AliceRequest):
+        score = alice._raw_kwargs["state"][self.state_type].get("score", 0)
+        return self.operation(score, self.count)
