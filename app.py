@@ -1,3 +1,4 @@
+import json
 from os import getenv
 from typing import Callable, Optional
 from random import choice, shuffle
@@ -18,6 +19,8 @@ import models
 # - звуковое сопровождение
 # - совместная игра
 # - свои вопросы
+# - Session state надо передавать в каждый запрос
+# - Повтори ответы
 
 WEBHOOK_URL_PATH = '/post'  # webhook endpoint
 
@@ -161,10 +164,10 @@ async def handle_reject_game(alice_request: AliceRequest):
     return alice_request.response(answer, end_session=True)
 
 
-@dp.request_handler(filters.RejectFilter())
-async def handle_reject(alice_request: AliceRequest):
-    answer = "Ну и ладно"
-    return alice_request.response(answer)
+# @dp.request_handler(filters.RejectFilter())
+# async def handle_reject(alice_request: AliceRequest):
+#     answer = "Ну и ладно"
+#     return alice_request.response(answer)
 
 
 @dp.request_handler(contains="добавь", state="*")
@@ -258,7 +261,11 @@ async def handler_false_answer(alice: AliceRequest):
     # Получить ID вопроса из State-а
     # Если ответ неверный, предложить подсказку или отказаться
     await dp.storage.set_state(alice.session.user_id, state=GameStates.HINT)
-    return alice.response("К сожелению это не верный ответ. Хотите получить подсказку ?")
+    state = State.from_request(alice)
+    return alice.response(
+        "К сожелению это не верный ответ. Хотите получить подсказку ?",
+        session_state=state.session.dict()
+    )
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.FACT)
@@ -320,7 +327,19 @@ async def the_only_errors_handler(alice_request, e):
     return alice_request.response('Oops! There was an error!')
 
 
+@web.middleware
+async def middleware(request, handler):
+    response = await handler(request)
+    data = (await request.json())["state"]["session"]
+    state = SessionState.parse_obj(data).dict()
+    body = json.loads(response.body)
+    body["session_state"] = state | body["session_state"]
+    response.body = json.dumps(body)
+    return response
+
+
 if __name__ == '__main__':
     app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
     app.on_startup.append(models.init_database)
+    app.middlewares.append(middleware)
     web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT, loop=dp.loop)
