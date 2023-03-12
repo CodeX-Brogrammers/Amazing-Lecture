@@ -1,3 +1,4 @@
+from os import getenv
 from typing import Callable, Optional
 from random import choice, shuffle
 import logging
@@ -20,7 +21,7 @@ import models
 
 WEBHOOK_URL_PATH = '/post'  # webhook endpoint
 
-WEBAPP_HOST = 'localhost'
+WEBAPP_HOST = getenv("APP_ADDRESS", "localhost")
 WEBAPP_PORT = 5000
 
 logging.basicConfig(format=u'%(filename)s [LINE:%(lineno)d] #%(levelname)-8s [%(asctime)s]  %(message)s',
