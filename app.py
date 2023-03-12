@@ -91,7 +91,7 @@ async def handle_repeat(alice_request: AliceRequest):
     return await handler(alice_request)
 
 
-"""@dp.request_handler(filters.StartFilter(), state=None)
+@dp.request_handler(filters.StartFilter(), state=None)
 @can_repeat
 async def handle_start(alice_request: AliceRequest):
     logging.info(f"User: {alice_request.session.user_id}: Handler->Start")
@@ -104,7 +104,7 @@ async def handle_start(alice_request: AliceRequest):
              "Я уже подготовила наш волшебный поезд. Готовы ли вы отправиться в это путешествие? "
     return alice_request.response(answer, buttons=BUTTONS)
     
-    TODO: придумать как вывести без уточнений"""
+    # TODO: придумать как вывести без уточнений
 
 
 # Обработчик "что ты умеешь" до игры
