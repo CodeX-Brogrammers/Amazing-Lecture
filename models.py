@@ -46,7 +46,7 @@ class Question(Document):
 
 
 async def init_database(*_):
-    client = AsyncIOMotorClient(getenv("MONGODB_URL"))
+    client = AsyncIOMotorClient(getenv("MONGO_URL"))
     await init_beanie(database=client["QUEST"], document_models=[Question])
 
 

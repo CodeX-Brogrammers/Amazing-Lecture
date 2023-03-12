@@ -213,7 +213,7 @@ async def handler_question(alice: AliceRequest):
         return alice.response("Похоже вопросы закончились 🙃")
     question: models.Question = models.Question.parse_obj(data[0])
     state = State.from_request(alice)
-    state.session.current_question = question.id
+    state.session.current_question = str(question.id)
 
     answers = question.answers
     shuffle(answers)
