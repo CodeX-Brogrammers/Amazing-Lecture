@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Callable
 from random import choice
 import logging
@@ -7,7 +8,6 @@ from aioalice import Dispatcher, get_new_configured_app
 from aioalice.dispatcher.storage import MemoryStorage
 from aioalice.types import AliceRequest, Button
 from aiohttp import web
-import attr
 
 import filters
 
@@ -39,11 +39,11 @@ dp = Dispatcher(storage=MemoryStorage())
 app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
 
 
-@attr.attrs
 class RequestState:
-    session = attr.attrib(type=dict)
-    user = attr.attrib(type=dict)
-    application = attr.attrib(type=dict)
+    def __init__(self, session, user, application):
+        self.session = defaultdict(int, session)
+        self.user = defaultdict(int, user)
+        self.application = defaultdict(int, application)
 
     @classmethod
     def from_request(cls, alice: AliceRequest):
