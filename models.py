@@ -4,7 +4,7 @@ from os import getenv
 import asyncio
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, AnyHttpUrl, conlist, root_validator
+from pydantic import BaseModel, conlist, root_validator
 
 from beanie import Document, Indexed, init_beanie
 
@@ -22,7 +22,7 @@ class Text(BaseModel):
 
 class Image(BaseModel):
     src: str
-    url: AnyHttpUrl
+    yandex_id: str
 
 
 class Answer(BaseModel):
@@ -32,23 +32,22 @@ class Answer(BaseModel):
     image: Optional[Image]
 
 
-class Difficulty(Enum):
-    EASY = "easy"
-    MEDIUM = "medium"
-    HARD = "hard"
-
-
 # Модель из БД
 class Question(Document):
     full_text: Text
     short_text: Text
     hint: Text
-    difficulty: Difficulty
     answers: conlist(Answer, max_items=3)
     images: Optional[Image]
+    fact: Text
 
     class Settings:
         name = "Questions"
+
+
+async def init_database(*_):
+    client = AsyncIOMotorClient(getenv("MONGODB_URL"))
+    await init_beanie(database=client["QUEST"], document_models=[Question])
 
 
 # This is an asynchronous example, so we will access it from an async function

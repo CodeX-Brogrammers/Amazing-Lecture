@@ -1,15 +1,17 @@
-from collections import defaultdict
-from typing import Callable
-from random import choice
+from typing import Callable, Optional
+from random import choice, shuffle
 import logging
 
 from aioalice.utils.helper import Helper, HelperMode, Item
 from aioalice import Dispatcher, get_new_configured_app
 from aioalice.dispatcher.storage import MemoryStorage
 from aioalice.types import AliceRequest, Button
+from pydantic import BaseModel, conint, Field
+from beanie import PydanticObjectId
 from aiohttp import web
 
 import filters
+import models
 
 # Blank:
 # - звуковое сопровождение
@@ -18,7 +20,7 @@ import filters
 
 WEBHOOK_URL_PATH = '/post'  # webhook endpoint
 
-WEBAPP_HOST = '0.0.0.0'
+WEBAPP_HOST = 'localhost'
 WEBAPP_PORT = 5000
 
 logging.basicConfig(format=u'%(filename)s [LINE:%(lineno)d] #%(levelname)-8s [%(asctime)s]  %(message)s',
@@ -30,7 +32,8 @@ REPEAT_Button = Button('Повтори')
 BUTTONS = [OK_Button, REJECT_Button, REPEAT_Button]
 
 POSSIBLE_ANSWER = ("Начинаем ?", "Готовы начать ?", "Поехали ?")
-
+CONTINUE_ANSWER = ("Продолжим ?", "Едем дальше ?")
+FACT_ANSWER = ("Хотите послушать интересный факт ?",)
 
 # Создаем экземпляр диспетчера и подключаем хранилище в памяти
 
@@ -39,11 +42,20 @@ dp = Dispatcher(storage=MemoryStorage())
 app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
 
 
-class RequestState:
-    def __init__(self, session, user, application):
-        self.session = defaultdict(int, session)
-        self.user = defaultdict(int, user)
-        self.application = defaultdict(int, application)
+class SessionState(BaseModel):
+    passed_questions: Optional[list[str]] = Field(default_factory=list)
+    current_answers: Optional[list[tuple[int, str]]] = Field(default_factory=list)
+    current_question: Optional[str] = None
+
+
+class UserState(BaseModel):
+    score: Optional[conint(ge=0)] = Field(0)
+
+
+class State(BaseModel):
+    session: SessionState
+    user: UserState
+    application: dict
 
     @classmethod
     def from_request(cls, alice: AliceRequest):
@@ -58,6 +70,7 @@ class GameStates(Helper):
     # SELECT_DIFFICULTY = Item()  # ?Выбор сложности?
     QUESTION_TIME = Item()  # Время вопроса
     GUESS_ANSWER = Item()  # Выбор ответов
+    FACT = Item()  # Выбор ответов
     HINT = Item()  # Подсказка
     END = Item()  # Завершение
 
@@ -66,6 +79,7 @@ def can_repeat(func: Callable):
     async def wrapper(alice: AliceRequest, *args, **kwargs):
         await dp.storage.set_data(alice.session.user_id, {"last": func})
         return await func(alice, *args, **kwargs)
+
     return wrapper
 
 
@@ -122,15 +136,18 @@ async def handle_help(alice_request: AliceRequest):
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.START)
-@can_repeat
 async def handle_start_game(alice_request: AliceRequest):
-    logging.info(f"User: {alice_request.session.user_id}: Handler->Start game")
-    await dp.storage.set_state(alice_request.session.user_id, GameStates.QUESTION_TIME)
-    answer = "Отлично! Наш поезд отправляется в увлекательное путешествие. " \
-             "Я надеюсь, что вы сможете погрузиться в такой необычный мир фантазий. " \
-             "И помните,что каждая достопримечательность имеет свою уникальную историю" \
-             " и может стать источником вдохновения для вашего будущего творчества."
-    return alice_request.response(answer)
+    return await handler_question(alice_request)
+# @can_repeat
+# async def handle_start_game(alice_request: AliceRequest):
+#     logging.info(f"User: {alice_request.session.user_id}: Handler->Start game")
+#     await dp.storage.set_state(alice_request.session.user_id, GameStates.QUESTION_TIME)
+#     answer = "Отлично! Наш поезд отправляется в увлекательное путешествие. " \
+#              "Я надеюсь, что вы сможете погрузиться в такой необычный мир фантазий. " \
+#              "И помните,что каждая достопримечательность имеет свою уникальную историю" \
+#              " и может стать источником вдохновения для вашего будущего творчества."
+#
+#     return alice_request.response(answer)
 
 
 # Отказ от игры и выход
@@ -149,16 +166,20 @@ async def handle_reject(alice_request: AliceRequest):
 
 @dp.request_handler(contains="добавь", state="*")
 async def handler_set_score(alice: AliceRequest):
-    state = RequestState.from_request(alice)
-    state.user["score"] += 1
-    return alice.response(f"Score: {state.user['score']}", session_state={"test": True}, user_state_update=state.user)
+    state = State.from_request(alice)
+    state.user.score += 1
+    return alice.response(
+        f"Score: {state.user.score}", user_state_update=state.user.dict()
+    )
 
 
 @dp.request_handler(contains="убавь", state="*")
 async def handler_set_score(alice: AliceRequest):
-    state = RequestState.from_request(alice)
-    state.user["score"] -= 1
-    return alice.response(f"Score: {state.user['score']}", session_state={"test": True}, user_state_update=state.user)
+    state = State.from_request(alice)
+    state.user.score -= 1
+    return alice.response(
+        f"Score: {state.user.score}", user_state_update=state.user.dict()
+    )
 
 
 @dp.request_handler(filters.ScoreFilter(filters.Operation.LE, 0), contains="подска")
@@ -168,9 +189,117 @@ async def handler(alice: AliceRequest):
 
 @dp.request_handler(filters.ScoreFilter(filters.Operation.GE, 1), contains="подска")
 async def handler(alice: AliceRequest):
-    state = RequestState.from_request(alice)
-    state.user['score'] -= 1
-    return alice.response("}{🌚р🌚ш🌚", user_state_update=state.user)
+    state = State.from_request(alice)
+    state.user.score -= 1
+    return alice.response("}{🌚р🌚ш🌚", user_state_update=state.user.dict())
+
+
+@dp.request_handler(state=GameStates.QUESTION_TIME)
+async def handler_question(alice: AliceRequest):
+    # Получить случайный вопрос
+    # TODO: что-то придумать для исключения вопросов из пулла после их проходения
+    # |-> Можно сохранять в сессии пройденные вопросы
+    # Сохранить его ID в State
+    # Отправить вопрос с вариантами ответов
+
+    await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
+
+    data = await models.Question.aggregate([{"$sample": {"size": 1}}]).to_list()
+    if len(data) == 0:
+        # Завершаем игру
+        return alice.response("Похоже вопросы закончились 🙃")
+    question: models.Question = models.Question.parse_obj(data[0])
+    state = State.from_request(alice)
+    state.session.current_question = question.id
+
+    answers = question.answers
+    shuffle(answers)
+    answers = [(index, answer) for index, answer in enumerate(answers, 1)]
+    text = "\n".join((
+        question.full_text.src, "\nВарианты ответов:",
+        *[f"{i}: {answer.text.src}" for i, answer in answers]
+    ))
+    tts = "\n".join((
+        question.full_text.tts, "Варианты ответов:",
+        *[f"{i}-й {answer.text.tts}" for i, answer in answers]
+    ))
+
+    buttons = [Button(title=answer.text.src, payload={"is_true": answer.is_true, "number": i})
+               for i, answer in answers]
+    state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
+    return alice.response(
+        text,
+        tts=tts,
+        session_state=state.session.dict(),
+        buttons=buttons
+    )
+
+
+@dp.request_handler(filters.TrueAnswerFilter(), state=GameStates.GUESS_ANSWER)
+async def handler_true_answer(alice: AliceRequest):
+    # Получить ID вопроса из State-а
+    # Если ответ верный, добавить балл
+    state = State.from_request(alice)
+    state.user.score += 1
+
+    state.session.passed_questions.append(
+        state.session.current_question
+    )
+    state.session.current_question = None
+    await dp.storage.set_state(alice.session.user_id, state=GameStates.FACT)
+    return alice.response(choice(FACT_ANSWER), user_state_update=state.user.dict())
+
+
+@dp.request_handler(filters.FalseAnswerFilter(), state=GameStates.GUESS_ANSWER)
+async def handler_false_answer(alice: AliceRequest):
+    # Получить ID вопроса из State-а
+    # Если ответ неверный, предложить подсказку или отказаться
+    await dp.storage.set_state(alice.session.user_id, state=GameStates.HINT)
+    return alice.response("К сожелению это не верный ответ. Хотите получить подсказку ?")
+
+
+@dp.request_handler(filters.ConfirmFilter(), state=GameStates.FACT)
+async def handler_fact_confirm(alice: AliceRequest):
+    state = State.from_request(alice)
+    question_id = state.session.current_question
+    question = await models.Question.get(PydanticObjectId(question_id))
+
+    fun_fact = "Интересный факт\n"
+    continue_answer = choice(CONTINUE_ANSWER)
+    state.session.current_question = None
+    state.session.passed_questions.append(question_id)
+    await dp.storage.set_state(alice.session.user_id, state=GameStates.QUESTION_TIME)
+    return alice.response(
+        "\n".join(fun_fact + question.fact.src + continue_answer),
+        tts="\n".join(fun_fact + question.fact.tts + continue_answer),
+        user_state_update=state.session.dict()
+    )
+
+
+@dp.request_handler(filters.RejectFilter(), state=GameStates.FACT)
+async def handler_fact_reject(alice: AliceRequest):
+    return await handler_question(alice)
+
+
+@dp.request_handler(filters.ConfirmFilter(), state=GameStates.HINT)
+async def handler_hint(alice: AliceRequest):
+    # Получить ID вопроса из State-а
+    # Если у пользователя достаточно баллов, даем подсказку
+    # Иначе не даем
+    # TODO: Добавить убавление подсказок
+    await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
+    state = State.from_request(alice)
+    question_id = state.session.current_question
+    question = await models.Question.get(PydanticObjectId(question_id))
+    return alice.response(
+        "\n".join(("Подсказка:", question.hint.src)),
+        tts="\n".join(("Подсказка:", question.hint.tts))
+    )
+
+
+@dp.request_handler(filters.RejectFilter(), state=GameStates.HINT)
+async def handler_hint(alice: AliceRequest):
+    return await handler_fact_confirm(alice)
 
 
 # TODO: 
@@ -190,4 +319,5 @@ async def the_only_errors_handler(alice_request, e):
 
 if __name__ == '__main__':
     app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
+    app.on_startup.append(models.init_database)
     web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT, loop=dp.loop)

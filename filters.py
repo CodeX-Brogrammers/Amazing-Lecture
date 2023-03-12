@@ -50,6 +50,28 @@ class StartFilter(Filter):
         return alice.session.new
 
 
+class TrueAnswerFilter(Filter):
+    # TODO: сделать проверку ответа по
+    #  - полученным откенам
+    #  - по численному ответу
+    def check(self, alice: AliceRequest):
+        payload = alice.request.payload
+        if payload:
+            return payload.get("is_true", False) is True
+        return False
+
+
+class FalseAnswerFilter(Filter):
+    # TODO: сделать проверку ответа по
+    #  - полученным откенам
+    #  - по численному ответу
+    def check(self, alice: AliceRequest):
+        payload = alice.request.payload
+        if payload:
+            return payload.get("is_true", False) is False
+        return False
+
+
 class ScoreFilter(Filter):
     def __init__(self, operation: Operation, count: int, state_type: StateType = StateType.USER):
         self.count = count
