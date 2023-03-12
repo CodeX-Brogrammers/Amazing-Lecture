@@ -91,18 +91,20 @@ async def handle_repeat(alice_request: AliceRequest):
     return await handler(alice_request)
 
 
-@dp.request_handler(filters.StartFilter(), state=None)
+"""@dp.request_handler(filters.StartFilter(), state=None)
 @can_repeat
 async def handle_start(alice_request: AliceRequest):
     logging.info(f"User: {alice_request.session.user_id}: Handler->Start")
     await dp.storage.set_state(alice_request.session.user_id, GameStates.START)
     answer = "Уважаемые студенты, рада видеть вас на своей лекции. " \
              "Я профессор исторических наук, Аврора Хистория. " \
+             "Вы можете узнать больше, если скажите \"Помощь\" и \"Что ты умеешь?\"" \
              "Я хочу поговорить с вами о том, как история может стать настоящей сказкой. " \
-             "Многие из вас думают, что история - скучный набор фактов и дат. " \
-             "Но что если я отправлю вас в настоящий мир фантазий и историй? " \
+             "Что если я отправлю вас в настоящий мир фантазий и историй? " \
              "Я уже подготовила наш волшебный поезд. Готовы ли вы отправиться в это путешествие? "
     return alice_request.response(answer, buttons=BUTTONS)
+    
+    TODO: придумать как вывести без уточнений"""
 
 
 # Обработчик "что ты умеешь" до игры
