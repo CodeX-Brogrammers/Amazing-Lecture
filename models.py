@@ -53,7 +53,7 @@ async def init_database(*_):
 # This is an asynchronous example, so we will access it from an async function
 async def example():
     # Beanie uses Motor async client under the hood
-    client = AsyncIOMotorClient(getenv("MONGODB_URL"))
+    client = AsyncIOMotorClient(getenv("MONGO_URL"))
 
     # Initialize beanie with the Product document class
     await init_beanie(database=client["QUEST"], document_models=[Question])
