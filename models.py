@@ -12,6 +12,7 @@ from beanie import Document, Indexed, init_beanie
 @dataclass(slots=True, frozen=True)
 class Diff:
     answer: str
+    number: int
     coincidence: float
 
 

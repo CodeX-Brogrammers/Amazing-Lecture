@@ -8,6 +8,7 @@ from aioalice.types import AliceRequest
 class SessionState(BaseModel):
     passed_questions: Optional[list[str]] = Field(default_factory=list)
     current_answers: Optional[list[tuple[int, str]]] = Field(default_factory=list)
+    current_true_answer: Optional[int] = Field(default=None)
     current_question: Optional[str] = None
 
 

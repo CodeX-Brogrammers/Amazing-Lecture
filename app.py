@@ -1,5 +1,5 @@
 from random import choice, shuffle
-from typing import Callable
+from typing import Callable, Optional
 from os import getenv
 import logging
 import json
@@ -7,12 +7,14 @@ import json
 from aioalice import Dispatcher, get_new_configured_app
 from aioalice.dispatcher.storage import MemoryStorage
 from aioalice.types import AliceRequest, Button
+from aiohttp.web_request import Request
 from beanie import PydanticObjectId
 from aiohttp import web
 
+from state import State, SessionState, GameStates
+from answer_checker import check_user_answer
 import filters
 import models
-from state import State, SessionState, GameStates
 
 # Blank:
 # - звуковое сопровождение
@@ -199,6 +201,7 @@ async def handler_question(alice: AliceRequest):
     buttons = [Button(title=answer.text.src, payload={"is_true": answer.is_true, "number": i})
                for i, answer in answers]
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
+    state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
     return alice.response(
         text,
         tts=tts,
@@ -207,7 +210,14 @@ async def handler_question(alice: AliceRequest):
     )
 
 
-@dp.request_handler(filters.TrueAnswerFilter(), state=GameStates.GUESS_ANSWER)
+@dp.request_handler(state=GameStates.GUESS_ANSWER)
+async def handler_quess_answer(alice: AliceRequest):
+    is_true_answer, diff = check_user_answer(alice)
+    if is_true_answer:
+        return await handler_true_answer(alice)
+    return await handler_false_answer(alice, diff)
+
+
 async def handler_true_answer(alice: AliceRequest):
     # Получить ID вопроса из State-а
     # Если ответ верный, добавить балл
@@ -217,20 +227,33 @@ async def handler_true_answer(alice: AliceRequest):
     state.session.passed_questions.append(
         state.session.current_question
     )
-    state.session.current_question = None
     await dp.storage.set_state(alice.session.user_id, state=GameStates.FACT)
-    return alice.response(choice(FACT_ANSWER), user_state_update=state.user.dict())
+    session = state.session
+    answer_text = session.current_answers[session.current_true_answer - 1][1]
+    question = await models.Question.get(PydanticObjectId(session.current_question))
+    answer = [answer for answer in question.answers if answer.text.src == answer_text][0]
+    fact_text = choice(FACT_ANSWER)
+    state.session.current_question = None
+    return alice.response(
+        "\n".join((answer.description.src, fact_text)),
+        tts="\n".join((answer.description.tts, fact_text)),
+        user_state_update=state.user.dict()
+    )
 
 
-@dp.request_handler(filters.FalseAnswerFilter(), state=GameStates.GUESS_ANSWER)
-async def handler_false_answer(alice: AliceRequest):
+async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff]):
     # Получить ID вопроса из State-а
     # Если ответ неверный, предложить подсказку или отказаться
     await dp.storage.set_state(alice.session.user_id, state=GameStates.HINT)
+    if diff is None:
+        return alice.response("Извините, я вас не понимаю, повторите пожалуйста")
+
     state = State.from_request(alice)
+    question = await models.Question.get(state.session.current_question)
+    answer = [answer for answer in question.answers if answer.text.src == diff.answer][0]
     return alice.response(
-        "К сожелению это не верный ответ. Хотите получить подсказку ?",
-        session_state=state.session.dict()
+        "\n".join((answer.description.src, "Хотите получить подсказку ?")),
+        tts="\n".join((answer.description.tts, "Хотите получить подсказку ?"))
     )
 
 
@@ -240,15 +263,14 @@ async def handler_fact_confirm(alice: AliceRequest):
     question_id = state.session.current_question
     question = await models.Question.get(PydanticObjectId(question_id))
 
-    fun_fact = "Интересный факт\n"
     continue_answer = choice(CONTINUE_ANSWER)
     state.session.current_question = None
     state.session.passed_questions.append(question_id)
     await dp.storage.set_state(alice.session.user_id, state=GameStates.QUESTION_TIME)
     return alice.response(
-        "\n".join(fun_fact + question.fact.src + continue_answer),
-        tts="\n".join(fun_fact + question.fact.tts + continue_answer),
-        user_state_update=state.session.dict()
+        "\n".join((question.fact.src, continue_answer)),
+        tts="\n".join((question.fact.tts, continue_answer)),
+        session_state=state.session.dict()
     )
 
 
@@ -294,8 +316,14 @@ async def the_only_errors_handler(alice_request, e):
 
 
 @web.middleware
-async def log_middleware(request, handler):
-    logging.info("User enter")
+async def log_middleware(request: Request, handler):
+    data = await request.json()
+    _request = data["request"]
+    logging.info(
+        f"User ({data['session']['user_id']}) enter"
+        f"\nCommand: {_request.get('command', None)}"
+        f"\nToken: {_request['nlu']['tokens']}"
+    )
     response = await handler(request)
     logging.info("User exit")
     return response
@@ -315,5 +343,5 @@ async def session_state_middleware(request, handler):
 if __name__ == '__main__':
     app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
     app.on_startup.append(models.init_database)
-    app.middlewares.append(session_state_middleware)
+    app.middlewares.extend((log_middleware, session_state_middleware))
     web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT, loop=dp.loop)
