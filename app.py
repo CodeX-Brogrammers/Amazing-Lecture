@@ -244,10 +244,10 @@ async def handler_true_answer(alice: AliceRequest):
 async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff]):
     # Получить ID вопроса из State-а
     # Если ответ неверный, предложить подсказку или отказаться
-    await dp.storage.set_state(alice.session.user_id, state=GameStates.HINT)
     if diff is None:
         return alice.response("Извините, я вас не понимаю, повторите пожалуйста")
 
+    await dp.storage.set_state(alice.session.user_id, state=GameStates.HINT)
     state = State.from_request(alice)
     question = await models.Question.get(state.session.current_question)
     answer = [answer for answer in question.answers if answer.text.src == diff.answer][0]
