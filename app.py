@@ -1,19 +1,18 @@
-import json
-from os import getenv
-from typing import Callable, Optional
 from random import choice, shuffle
+from typing import Callable
+from os import getenv
 import logging
+import json
 
-from aioalice.utils.helper import Helper, HelperMode, Item
 from aioalice import Dispatcher, get_new_configured_app
 from aioalice.dispatcher.storage import MemoryStorage
 from aioalice.types import AliceRequest, Button
-from pydantic import BaseModel, conint, Field
 from beanie import PydanticObjectId
 from aiohttp import web
 
 import filters
 import models
+from state import State, SessionState, GameStates
 
 # Blank:
 # - звуковое сопровождение
@@ -44,39 +43,6 @@ FACT_ANSWER = ("Хотите послушать интересный факт ?"
 
 dp = Dispatcher(storage=MemoryStorage())
 app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
-
-
-class SessionState(BaseModel):
-    passed_questions: Optional[list[str]] = Field(default_factory=list)
-    current_answers: Optional[list[tuple[int, str]]] = Field(default_factory=list)
-    current_question: Optional[str] = None
-
-
-class UserState(BaseModel):
-    score: Optional[conint(ge=0)] = Field(0)
-
-
-class State(BaseModel):
-    session: SessionState
-    user: UserState
-    application: dict
-
-    @classmethod
-    def from_request(cls, alice: AliceRequest):
-        return cls(**alice._raw_kwargs["state"])
-
-
-class GameStates(Helper):
-    mode = HelperMode.snake_case
-
-    START = Item()  # Навык только запустился
-    # SELECT_GAME = Item()  # Выбор режима (Default или Fast)
-    # SELECT_DIFFICULTY = Item()  # ?Выбор сложности?
-    QUESTION_TIME = Item()  # Время вопроса
-    GUESS_ANSWER = Item()  # Выбор ответов
-    FACT = Item()  # Выбор ответов
-    HINT = Item()  # Подсказка
-    END = Item()  # Завершение
 
 
 def can_repeat(func: Callable):
@@ -328,7 +294,15 @@ async def the_only_errors_handler(alice_request, e):
 
 
 @web.middleware
-async def middleware(request, handler):
+async def log_middleware(request, handler):
+    logging.info("User enter")
+    response = await handler(request)
+    logging.info("User exit")
+    return response
+
+
+@web.middleware
+async def session_state_middleware(request, handler):
     response = await handler(request)
     data = (await request.json())["state"]["session"]
     state = SessionState.parse_obj(data).dict()
@@ -341,5 +315,5 @@ async def middleware(request, handler):
 if __name__ == '__main__':
     app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
     app.on_startup.append(models.init_database)
-    app.middlewares.append(middleware)
+    app.middlewares.append(session_state_middleware)
     web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT, loop=dp.loop)

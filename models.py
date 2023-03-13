@@ -1,5 +1,5 @@
+from dataclasses import dataclass
 from typing import Optional
-from enum import Enum
 from os import getenv
 import asyncio
 
@@ -7,6 +7,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, conlist, root_validator
 
 from beanie import Document, Indexed, init_beanie
+
+
+@dataclass(slots=True, frozen=True)
+class Diff:
+    answer: str
+    coincidence: float
 
 
 class Text(BaseModel):

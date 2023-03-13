@@ -1,9 +1,12 @@
 from operator import le, ge, lt, gt, eq
-import enum
 from typing import Callable
+import enum
 
 from aioalice.dispatcher.filters import Filter
 from aioalice.types import AliceRequest
+
+import answer_checker
+from state import State
 
 
 class Operation(enum.Enum):
@@ -54,10 +57,25 @@ class TrueAnswerFilter(Filter):
     # TODO: сделать проверку ответа по
     #  - полученным откенам
     #  - по численному ответу
-    def check(self, alice: AliceRequest):
-        payload = alice.request.payload
-        if payload:
-            return payload.get("is_true", False) is True
+    @staticmethod
+    def check(alice: AliceRequest):
+        if alice.request.type == "ButtonPressed" \
+                and alice.request.payload.get("is_true", False) is True:
+            return True
+
+        state = State.from_request(alice)
+        result = answer_checker.calculate_correct_answer_by_text(
+            alice.request.command, state.session.current_answers
+        )
+        if result:
+            return True
+
+        result = answer_checker.calculate_correct_answer_by_number(
+            alice.request.command, state.session.current_answers
+        )
+        if result:
+            return True
+
         return False
 
 
@@ -66,10 +84,7 @@ class FalseAnswerFilter(Filter):
     #  - полученным откенам
     #  - по численному ответу
     def check(self, alice: AliceRequest):
-        payload = alice.request.payload
-        if payload:
-            return payload.get("is_true", False) is False
-        return False
+        return not TrueAnswerFilter.check(alice)
 
 
 class ScoreFilter(Filter):
