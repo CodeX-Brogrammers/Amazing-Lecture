@@ -185,9 +185,7 @@ async def handler_question(alice: AliceRequest):
     question: models.Question = models.Question.parse_obj(data[0])
     state = State.from_request(alice)
     state.session.current_question = str(question.id)
-    
-    card.type = "BigImage"
-    card.image_id = question.images
+   
     answers = question.answers
     shuffle(answers)
     answers = [(index, answer) for index, answer in enumerate(answers, 1)]
@@ -205,7 +203,6 @@ async def handler_question(alice: AliceRequest):
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
     state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
     return alice.response(
-        card,
         text,
         tts=tts,
         session_state=state.session.dict(),
