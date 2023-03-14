@@ -45,7 +45,7 @@ class Question(Document):
     short_text: Text
     hint: Text
     answers: conlist(Answer, max_items=3)
-    images: Optional[Image]
+    image: Optional[Image]
     fact: Text
 
     class Settings:

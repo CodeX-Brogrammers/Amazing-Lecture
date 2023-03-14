@@ -94,7 +94,7 @@ async def repeat_question(alice: AliceRequest):
     return dict(
         text=question.full_text.src,
         tts=question.full_text.tts,
-        image_id=question.images.yandex_id,
+        image_id=question.image.yandex_id,
         title="",
         description=question.full_text.src
     )
@@ -225,7 +225,7 @@ async def handler_question(alice: AliceRequest):
         tts=tts,
         session_state=state.session.dict(),
         buttons=buttons,
-        image_id=question.images.yandex_id,
+        image_id=question.image.yandex_id,
         title="",
         description=text
     )
