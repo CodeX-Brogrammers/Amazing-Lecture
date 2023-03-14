@@ -31,7 +31,7 @@ WEBAPP_PORT = 5000
 logging.basicConfig(format=u'%(filename)s [LINE:%(lineno)d] #%(levelname)-8s [%(asctime)s]  %(message)s',
                     level=logging.INFO)
 
-OK_Button = Button('Ладно')
+OK_Button = Button('Да')
 REJECT_Button = Button('Нет')
 REPEAT_Button = Button('Повтори')
 BUTTONS = [OK_Button, REJECT_Button, REPEAT_Button]
@@ -126,6 +126,7 @@ def repeat_answers(alice: AliceRequest):
 @can_repeat
 async def handle_start(alice: AliceRequest):
     logging.info(f"Handler->Старт")
+    print(alice._raw_kwargs["state"])
     await dp.storage.set_state(alice.session.user_id, GameStates.START)
     answer = "Уважаемые студенты, рада видеть вас на своей лекции. " \
              "Я профессор исторических наук, Аврора Хистория. " \
@@ -190,15 +191,20 @@ async def handler_question(alice: AliceRequest):
     # Сохранить его ID в State
     # Отправить вопрос с вариантами ответов
     logging.info(f"User: {alice.session.user_id}: Handler->Получение вопроса")
+    state = State.from_request(alice)
 
     await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
 
-    data = await models.Question.aggregate([{"$sample": {"size": 1}}]).to_list()
+    data = await models.Question.aggregate([
+        {'$match': {'_id': {'$nin': tuple(map(lambda q: PydanticObjectId(q), state.session.passed_questions))}}},
+        {"$sample": {"size": 1}}
+    ]).to_list()
+
     if len(data) == 0:
-        # Завершаем игру
-        return alice.response("Похоже вопросы закончились 🙃")
+        logging.info(f"User: {alice.session.user_id}: Handler->Получение вопроса->вопросы закончились")
+        return await handler_end(alice)
+
     question: models.Question = models.Question.parse_obj(data[0])
-    state = State.from_request(alice)
     state.session.current_question = str(question.id)
 
     answers = question.answers
@@ -253,7 +259,9 @@ async def handler_true_answer(alice: AliceRequest):
     return alice.response(
         "\n".join((answer.description.src, fact_text)),
         tts="\n".join((answer.description.tts, fact_text)),
-        user_state_update=state.user.dict()
+        user_state_update=state.user.dict(),
+        session_state=state.session.dict(),
+        buttons=[OK_Button, REJECT_Button]
     )
 
 
@@ -270,7 +278,8 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff])
     answer = [answer for answer in question.answers if answer.text.src == diff.answer][0]
     return alice.response(
         "\n".join((answer.description.src, "Хотите получить подсказку ?")),
-        tts="\n".join((answer.description.tts, "Хотите получить подсказку ?"))
+        tts="\n".join((answer.description.tts, "Хотите получить подсказку ?")),
+        buttons=[OK_Button, REJECT_Button]
     )
 
 
@@ -283,13 +292,10 @@ async def handler_fact_confirm(alice: AliceRequest):
     question = await models.Question.get(PydanticObjectId(question_id))
 
     continue_answer = choice(CONTINUE_ANSWER)
-    state.session.current_question = None
-    state.session.passed_questions.append(question_id)
     await dp.storage.set_state(alice.session.user_id, state=GameStates.QUESTION_TIME)
     return alice.response(
         "\n".join((question.fact.src, continue_answer)),
-        tts="\n".join((question.fact.tts, continue_answer)),
-        session_state=state.session.dict()
+        tts="\n".join((question.fact.tts, continue_answer))
     )
 
 
@@ -323,6 +329,30 @@ async def handler_hint(alice: AliceRequest):
 async def handler_hint(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Отказ от подсказки")
     return await handler_fact_confirm(alice)
+
+
+async def handler_end(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Заключение")
+    await dp.storage.set_state(alice.session.user_id, GameStates.END)
+    text = "Что-ж мы прибываем на конечную станцию и наше путешествие подходит к концу.\n" \
+           "Это было крайне увлекательно!\n" \
+           "Я давно не встречала таких интересных людей, как вы!\n" \
+           "Спасибо за наше путешествие. Возвращайтесь почаще, наш поезд всегда вас ждёт!\n" \
+           "Желаете начать заново?"
+    return alice.response(text)
+
+
+@dp.request_handler(filters.RejectFilter(), state=GameStates.END)
+async def handler_restart_game(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Перезапуск игры")
+    alice._raw_kwargs["state"] = {}
+    return handler_question(alice)
+
+
+@dp.request_handler(filters.ConfirmFilter(), state=GameStates.END)
+async def handler_confirm_close_game(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Завершение игры")
+    return alice.response("👋", end_session=True)
 
 
 # TODO: 
