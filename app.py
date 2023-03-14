@@ -43,7 +43,7 @@ FACT_ANSWER = ("Хотите послушать интересный факт ?"
 # Создаем экземпляр диспетчера и подключаем хранилище в памяти
 
 
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher(storage=MemoryStorage())  # Сделать Хранилище состояний на Redis
 app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
 
 
@@ -318,9 +318,11 @@ async def handler_hint(alice: AliceRequest):
     state = State.from_request(alice)
     question_id = state.session.current_question
     question = await models.Question.get(PydanticObjectId(question_id))
+    answers = repeat_answers(alice)
     return alice.response(
         "\n".join(("Подсказка:", question.hint.src)),
-        tts="\n".join(("Подсказка:", question.hint.tts))
+        tts="\n".join(("Подсказка:", question.hint.tts)),
+        buttons=answers["buttons"]
     )
 
 
