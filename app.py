@@ -12,9 +12,9 @@ from beanie import PydanticObjectId
 from aiohttp import web
 
 from state import State, SessionState, GameStates
-import nlu
 import filters
 import models
+import nlu
 
 # Blank:
 # - звуковое сопровождение
@@ -215,7 +215,7 @@ async def handler_question(alice: AliceRequest):
                for i, answer in answers]
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
     state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
-    return alice.response_big_image(
+    return alice.response(
         text,
         tts=tts,
         session_state=state.session.dict(),
