@@ -65,107 +65,62 @@ async def handle_repeat(alice_request: AliceRequest):
 
 @dp.request_handler(filters.StartFilter(), state=None)
 @can_repeat
-async def handle_start(alice_request: AliceRequest):
-    logging.info(f"User: {alice_request.session.user_id}: Handler->Start")
-    await dp.storage.set_state(alice_request.session.user_id, GameStates.START)
+async def handle_start(alice: AliceRequest):
+    logging.info(f"Handler->Старт")
+    await dp.storage.set_state(alice.session.user_id, GameStates.START)
     answer = "Уважаемые студенты, рада видеть вас на своей лекции. " \
              "Я профессор исторических наук, Аврора Хистория. " \
              "Вы можете узнать больше, если скажите \"Помощь\" и \"Что ты умеешь?\"" \
              "Я хочу поговорить с вами о том, как история может стать настоящей сказкой. " \
              "Что если я отправлю вас в настоящий мир фантазий и историй? " \
              "Я уже подготовила наш волшебный поезд. Готовы ли вы отправиться в это путешествие? "
-    return alice_request.response(answer, buttons=BUTTONS)
+    return alice.response(answer, buttons=BUTTONS)
     
     # TODO: придумать как вывести без уточнений
 
 
 # Обработчик "что ты умеешь" до игры
 # TODO: расширить набор команд
-@dp.request_handler(commands=["что ты умеешь"])
+@dp.request_handler(commands=["что ты умеешь"], state="*")
 @can_repeat
-async def handle_can_do(alice_request: AliceRequest):
-    logging.info(f"User: {alice_request.session.user_id}: Handler->Help")
+async def handle_can_do(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Что ты умеешь")
     answer = "Навык будет задавать вам вопросы и предлагать варианты ответов. " \
              "Для успешного прохождения навыка вам нужно ответить верно как можно больше раз. " \
              "У вас есть  возможность взять подсказку для вопроса, но количество подсказок ограничено."
-    answer += choice(POSSIBLE_ANSWER)
-    return alice_request.response(answer, tts=answer + '<speaker audio="alice-music-drum-loop-1.opus">')
+    state = await dp.storage.get_state(alice.session.user_id)
+    if state in ("DEFAULT_STATE", "*"):
+        answer = f"{answer}\n{choice(POSSIBLE_ANSWER)}"
+    return alice.response(answer)
 
 
 # Обработчик помощи до игры
-@dp.request_handler(filters.HelpFilter(), state=GameStates.START)
+@dp.request_handler(filters.HelpFilter(), state="*")
 @can_repeat
-async def handle_help(alice_request: AliceRequest):
-    logging.info(f"User: {alice_request.session.user_id}: Handler->Help")
+async def handle_help(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Помощь")
     answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие." \
              "Продвигаясь все дальше вы будете отвечать на вопросы и зарабатывать баллы." \
              "Погрузитесь в атмосферу Древнего Рима, Средневековья," \
              " Эпохи Возрождения вместе с замечательным проводником Авророй Хисторией."
-    answer += choice(POSSIBLE_ANSWER)
-    return alice_request.response(answer, tts=answer + '<speaker audio="alice-music-drum-loop-1.opus">')
-
-
-# Обработчик помощи во время игры
-# Обработчик "что ты умеешь" во время игры
+    state = await dp.storage.get_state(alice.session.user_id)
+    if state in ("DEFAULT_STATE", "*"):
+        answer = f"{answer}\n{choice(POSSIBLE_ANSWER)}"
+    return alice.response(answer)
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.START)
-async def handle_start_game(alice_request: AliceRequest):
-    return await handler_question(alice_request)
-# @can_repeat
-# async def handle_start_game(alice_request: AliceRequest):
-#     logging.info(f"User: {alice_request.session.user_id}: Handler->Start game")
-#     await dp.storage.set_state(alice_request.session.user_id, GameStates.QUESTION_TIME)
-#     answer = "Отлично! Наш поезд отправляется в увлекательное путешествие. " \
-#              "Я надеюсь, что вы сможете погрузиться в такой необычный мир фантазий. " \
-#              "И помните,что каждая достопримечательность имеет свою уникальную историю" \
-#              " и может стать источником вдохновения для вашего будущего творчества."
-#
-#     return alice_request.response(answer)
+async def handle_start_game(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Начать игру")
+    return await handler_question(alice)
 
 
 # Отказ от игры и выход
 @dp.request_handler(filters.RejectFilter(), state=GameStates.START)
-async def handle_reject_game(alice_request: AliceRequest):
-    logging.info(f"User: {alice_request.session.user_id}: Handler->Reject game")
+async def handle_reject_game(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Отмена игры")
     answer = "Было приятно видеть вас на моей лекции. Заходите почаще, всегда рада."
-    return alice_request.response(answer, end_session=True)
-
-
-# @dp.request_handler(filters.RejectFilter())
-# async def handle_reject(alice_request: AliceRequest):
-#     answer = "Ну и ладно"
-#     return alice_request.response(answer)
-
-
-@dp.request_handler(contains="добавь", state="*")
-async def handler_set_score(alice: AliceRequest):
-    state = State.from_request(alice)
-    state.user.score += 1
-    return alice.response(
-        f"Score: {state.user.score}", user_state_update=state.user.dict()
-    )
-
-
-@dp.request_handler(contains="убавь", state="*")
-async def handler_set_score(alice: AliceRequest):
-    state = State.from_request(alice)
-    state.user.score -= 1
-    return alice.response(
-        f"Score: {state.user.score}", user_state_update=state.user.dict()
-    )
-
-
-@dp.request_handler(filters.ScoreFilter(filters.Operation.LE, 0), contains="подска")
-async def handler(alice: AliceRequest):
-    return alice.response("Нет🌝")
-
-
-@dp.request_handler(filters.ScoreFilter(filters.Operation.GE, 1), contains="подска")
-async def handler(alice: AliceRequest):
-    state = State.from_request(alice)
-    state.user.score -= 1
-    return alice.response("}{🌚р🌚ш🌚", user_state_update=state.user.dict())
+    return alice.response(answer, end_session=True)
 
 
 @dp.request_handler(state=GameStates.QUESTION_TIME)
@@ -175,6 +130,7 @@ async def handler_question(alice: AliceRequest):
     # |-> Можно сохранять в сессии пройденные вопросы
     # Сохранить его ID в State
     # Отправить вопрос с вариантами ответов
+    logging.info(f"User: {alice.session.user_id}: Handler->Получение вопроса")
 
     await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
 
@@ -221,6 +177,7 @@ async def handler_quess_answer(alice: AliceRequest):
 async def handler_true_answer(alice: AliceRequest):
     # Получить ID вопроса из State-а
     # Если ответ верный, добавить балл
+    logging.info(f"User: {alice.session.user_id}: Handler->Отгадал ответ")
     state = State.from_request(alice)
     state.user.score += 1
 
@@ -244,6 +201,7 @@ async def handler_true_answer(alice: AliceRequest):
 async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff]):
     # Получить ID вопроса из State-а
     # Если ответ неверный, предложить подсказку или отказаться
+    logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ")
     if diff is None:
         return alice.response("Извините, я вас не понимаю, повторите пожалуйста")
 
@@ -259,6 +217,7 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff])
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.FACT)
 async def handler_fact_confirm(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Отправка факта")
     state = State.from_request(alice)
     question_id = state.session.current_question
     question = await models.Question.get(PydanticObjectId(question_id))
@@ -276,6 +235,7 @@ async def handler_fact_confirm(alice: AliceRequest):
 
 @dp.request_handler(filters.RejectFilter(), state=GameStates.FACT)
 async def handler_fact_reject(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Отказ от факта")
     return await handler_question(alice)
 
 
@@ -297,6 +257,7 @@ async def handler_hint(alice: AliceRequest):
 
 @dp.request_handler(filters.RejectFilter(), state=GameStates.HINT)
 async def handler_hint(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Отказ от подсказки")
     return await handler_fact_confirm(alice)
 
 
@@ -310,9 +271,9 @@ async def handle_intent(alice_request: AliceRequest):
 
 
 @dp.errors_handler()
-async def the_only_errors_handler(alice_request, e):
+async def the_only_errors_handler(alice, e):
     logging.error('An error!', exc_info=e)
-    return alice_request.response('Oops! There was an error!')
+    return alice.response('Что-то пошло не так')
 
 
 @web.middleware
