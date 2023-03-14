@@ -12,7 +12,7 @@ from beanie import PydanticObjectId
 from aiohttp import web
 
 from state import State, SessionState, GameStates
-from answer_checker import check_user_answer
+import nlu
 import filters
 import models
 
@@ -49,18 +49,75 @@ app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
 
 def can_repeat(func: Callable):
     async def wrapper(alice: AliceRequest, *args, **kwargs):
-        await dp.storage.set_data(alice.session.user_id, {"last": func})
-        return await func(alice, *args, **kwargs)
+        response = await func(alice, *args, **kwargs)
+        await dp.storage.set_data(alice.session.user_id, {"last": response})
+        return response
 
     return wrapper
 
 
 # Обработчик повторения последней команды
-@dp.request_handler(filters.RepeatFilter(), state=None)
-async def handle_repeat(alice_request: AliceRequest):
-    handler = (await dp.storage.get_data(alice_request.session.user_id)).get("last", lambda: None)
-    logging.info(f"User: {alice_request.session.user_id}: Handler->Repeat->{handler.__name__}")
-    return await handler(alice_request)
+@dp.request_handler(filters.RepeatFilter(), state="*")
+async def handle_repeat(alice: AliceRequest):
+    state = await dp.storage.get_state(alice.session.user_id)
+    if state in ("QUESTION_TIME", "GUESS_ANSWER", "HINT"):
+        if nlu.calculate_coincidence(
+            input_tokens=nlu.lemmatize(nlu.tokenizer(alice.request.command)),
+            source_tokens=nlu.lemmatize(["вопрос"])
+        ) >= 1.0:
+            logging.info(f"User: {alice.session.user_id}: Handler->Повторить->Вопрос")
+            return await repeat_question(alice)
+
+        if nlu.calculate_coincidence(
+            input_tokens=nlu.lemmatize(nlu.tokenizer(alice.request.command)),
+            source_tokens=nlu.lemmatize(["ответ"])
+        ) >= 1.0:
+            logging.info(f"User: {alice.session.user_id}: Handler->Повторить->Ответы")
+            return await repeat_answers(alice)
+
+    logging.info(f"User: {alice.session.user_id}: Handler->Повторить->Последний ответ")
+    response = (await dp.storage.get_data(alice.session.user_id))
+    response = response.get("last", alice.response("Мне нечего повторять"))
+    return response
+
+
+async def repeat_question(alice: AliceRequest):
+    state = State.from_request(alice)
+    question = await models.Question.get(PydanticObjectId(state.session.current_question))
+    return alice.response_big_image(
+        question.full_text.src,
+        tts=question.full_text.tts,
+        image_id=question.images.yandex_id,
+        title="",
+        description=question.full_text.src
+    )
+
+
+async def repeat_answers(alice: AliceRequest):
+    state = State.from_request(alice)
+
+    answers = state.session.current_answers
+    text = "\n".join((
+        "Варианты ответов:",
+        *[f"{i}: {answer.text.src}" for i, answer in answers]
+    ))
+    tts = "\n".join((
+        "Варианты ответов:",
+        *[f"{i}-й {answer.text.tts}" for i, answer in answers]
+    ))
+    buttons = [
+        Button(
+            title=text,
+            payload={"is_true": i == state.session.current_true_answer, "number": i}
+        )
+        for i, text in answers
+    ]
+
+    return alice.response(
+        text,
+        tts=tts,
+        buttons=buttons
+    )
 
 
 @dp.request_handler(filters.StartFilter(), state=None)
@@ -75,13 +132,11 @@ async def handle_start(alice: AliceRequest):
              "Что если я отправлю вас в настоящий мир фантазий и историй? " \
              "Я уже подготовила наш волшебный поезд. Готовы ли вы отправиться в это путешествие? "
     return alice.response(answer, buttons=BUTTONS)
-    
-    # TODO: придумать как вывести без уточнений
 
 
 # Обработчик "что ты умеешь" до игры
 # TODO: расширить набор команд
-@dp.request_handler(commands=["что ты умеешь"], state="*")
+@dp.request_handler(filters.CanDoFilter(), state="*")
 @can_repeat
 async def handle_can_do(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Что ты умеешь")
@@ -110,6 +165,7 @@ async def handle_help(alice: AliceRequest):
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.START)
+@can_repeat
 async def handle_start_game(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Начать игру")
     return await handler_question(alice)
@@ -124,6 +180,7 @@ async def handle_reject_game(alice: AliceRequest):
 
 
 @dp.request_handler(state=GameStates.QUESTION_TIME)
+@can_repeat
 async def handler_question(alice: AliceRequest):
     # Получить случайный вопрос
     # TODO: что-то придумать для исключения вопросов из пулла после их проходения
@@ -158,17 +215,20 @@ async def handler_question(alice: AliceRequest):
                for i, answer in answers]
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
     state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
-    return alice.response(
+    return alice.response_big_image(
         text,
         tts=tts,
         session_state=state.session.dict(),
-        buttons=buttons
+        buttons=buttons,
+        image_id=question.images.yandex_id,
+        title="",
+        description=text
     )
 
 
 @dp.request_handler(state=GameStates.GUESS_ANSWER)
 async def handler_quess_answer(alice: AliceRequest):
-    is_true_answer, diff = check_user_answer(alice)
+    is_true_answer, diff = nlu.check_user_answer(alice)
     if is_true_answer:
         return await handler_true_answer(alice)
     return await handler_false_answer(alice, diff)
@@ -216,6 +276,7 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff])
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.FACT)
+@can_repeat
 async def handler_fact_confirm(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Отправка факта")
     state = State.from_request(alice)
@@ -234,12 +295,14 @@ async def handler_fact_confirm(alice: AliceRequest):
 
 
 @dp.request_handler(filters.RejectFilter(), state=GameStates.FACT)
+@can_repeat
 async def handler_fact_reject(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Отказ от факта")
     return await handler_question(alice)
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.HINT)
+@can_repeat
 async def handler_hint(alice: AliceRequest):
     # Получить ID вопроса из State-а
     # Если у пользователя достаточно баллов, даем подсказку
@@ -256,6 +319,7 @@ async def handler_hint(alice: AliceRequest):
 
 
 @dp.request_handler(filters.RejectFilter(), state=GameStates.HINT)
+@can_repeat
 async def handler_hint(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Отказ от подсказки")
     return await handler_fact_confirm(alice)
@@ -264,10 +328,10 @@ async def handler_hint(alice: AliceRequest):
 # TODO: 
 # 1. Отображать статистику игрока ака "Процент успешности"
 @dp.request_handler(state=None)
-async def handle_intent(alice_request: AliceRequest):
-    data = alice_request.request.nlu._raw_kwargs
+async def handle_intent(alice: AliceRequest):
+    data = alice.request.nlu._raw_kwargs
     answer = f"Intents: {data['intents']}\nTokens: {data['tokens']}"
-    return alice_request.response(answer, tts='ДА<speaker audio="alice-sounds-things-explosion-1.opus">')
+    return alice.response(answer, tts='ДА<speaker audio="alice-sounds-things-explosion-1.opus">')
 
 
 @dp.errors_handler()

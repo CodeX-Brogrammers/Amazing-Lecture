@@ -45,6 +45,16 @@ class HelpFilter(Filter):
         return _check_included_intent_names(alice, ["YANDEX.HELP", "HELP"])
 
 
+class RestartFilter(Filter):
+    def check(self, alice: AliceRequest):
+        return _check_included_intent_names(alice, ["RESTART"])
+
+
+class CanDoFilter(Filter):
+    def check(self, alice: AliceRequest):
+        return _check_included_intent_names(alice, ["WHATCANDO"])
+
+
 class StartFilter(Filter):
     def check(self, alice: AliceRequest):
         return alice.session.new

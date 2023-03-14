@@ -20,13 +20,22 @@ def lemmatize(tokens: list[str]):
     return result
 
 
+def tokenizer(text: str) -> list[str]:
+    text = text.lower().replace("-", " ")
+    return text.split()
+
+
+def calculate_coincidence(input_tokens: set[str], source_tokens: set[str]) -> float:
+    return len(input_tokens & source_tokens) / len(source_tokens)
+
+
 def calculate_correct_answer_by_number(
-        user_answer: str, answers: list[tuple[int, str]], threshold: float = 0.33) -> list[Diff]:
+        user_answer: str, answers: list[tuple[int, str]], threshold: float = 0.33) -> Optional[Diff]:
     result = []
-    normalize_user_answer = lemmatize(user_answer.lower().split())
+    normalize_user_answer = lemmatize(tokenizer(user_answer))
     for answer in answers:
         normalize_answer = set(str(answer[0]))
-        coincidence = len(normalize_user_answer & normalize_answer) / len(normalize_answer)
+        coincidence = calculate_coincidence(normalize_user_answer, normalize_answer)
         if coincidence >= threshold:
             result.append(
                 Diff(
@@ -36,17 +45,18 @@ def calculate_correct_answer_by_number(
                 )
             )
     result.sort(key=attrgetter("coincidence"))
-    return result
+    if result:
+        return result[0]
+    return None
 
 
 def calculate_correct_answer_by_text(
-        user_answer: str, answers: list[tuple[int, str]], threshold: float = 0.33) -> list[Optional[Diff]]:
+        user_answer: str, answers: list[tuple[int, str]], threshold: float = 0.33) -> Optional[Diff]:
     result = []
-    user_answer = user_answer.lower().replace("-", " ")
-    normalize_user_answer = lemmatize(user_answer.split())
+    normalize_user_answer = lemmatize(tokenizer(user_answer))
     for answer in answers:
-        normalize_answer = lemmatize(answer[1].lower().split())
-        coincidence = len(normalize_user_answer & normalize_answer) / len(normalize_answer)
+        normalize_answer = lemmatize(tokenizer(answer[1]))
+        coincidence = calculate_coincidence(normalize_user_answer, normalize_answer)
         if coincidence >= threshold:
             result.append(
                 Diff(
@@ -56,7 +66,9 @@ def calculate_correct_answer_by_text(
                 )
             )
     result.sort(key=attrgetter("coincidence"))
-    return result
+    if result:
+        return result[0]
+    return None
 
 
 def check_user_answer(alice: AliceRequest) -> tuple[bool, Optional[Diff]]:
@@ -71,20 +83,18 @@ def check_user_answer(alice: AliceRequest) -> tuple[bool, Optional[Diff]]:
                    coincidence=0
                )
 
-    result = calculate_correct_answer_by_text(
+    diff = calculate_correct_answer_by_text(
         alice.request.command, state.session.current_answers
     )
-    logging.info(f"Answer by text: {result}" + str(state.session.current_answers))
-    if result:
-        diff = result[0]
+    logging.info(f"Answer by text: {diff};\nAnswers: {state.session.current_answers}")
+    if diff:
         return state.session.current_true_answer == diff.number, diff
 
-    result = calculate_correct_answer_by_number(
+    diff = calculate_correct_answer_by_number(
         alice.request.command, state.session.current_answers
     )
-    logging.info(f"Answer by number: {result}" + str(state.session.current_answers))
-    if result:
-        diff = result[0]
+    logging.info(f"Answer by number: {diff};\nAnswers: {state.session.current_answers}")
+    if diff:
         return state.session.current_true_answer == diff.number, diff
 
     return False, None
