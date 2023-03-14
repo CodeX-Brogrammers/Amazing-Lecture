@@ -4,9 +4,9 @@ from os import getenv
 import logging
 import json
 
+from aioalice.types import AliceRequest, Button, MediaButton
 from aioalice import Dispatcher, get_new_configured_app
 from aioalice.dispatcher.storage import MemoryStorage
-from aioalice.types import AliceRequest, Button
 from aiohttp.web_request import Request
 from beanie import PydanticObjectId
 from aiohttp import web
@@ -60,20 +60,27 @@ def can_repeat(func: Callable):
 @dp.request_handler(filters.RepeatFilter(), state="*")
 async def handle_repeat(alice: AliceRequest):
     state = await dp.storage.get_state(alice.session.user_id)
-    if state in ("QUESTION_TIME", "GUESS_ANSWER", "HINT"):
+    if state.upper() in ("QUESTION_TIME", "GUESS_ANSWER", "HINT"):
         if nlu.calculate_coincidence(
             input_tokens=nlu.lemmatize(nlu.tokenizer(alice.request.command)),
             source_tokens=nlu.lemmatize(["вопрос"])
         ) >= 1.0:
             logging.info(f"User: {alice.session.user_id}: Handler->Повторить->Вопрос")
-            return await repeat_question(alice)
+            question = await repeat_question(alice)
+            answers = repeat_answers(alice)
+            question["tts"] += f"\n{answers['tts']}"
+            return alice.response_big_image(
+                **question,
+                buttons=answers["buttons"]
+            )
 
         if nlu.calculate_coincidence(
             input_tokens=nlu.lemmatize(nlu.tokenizer(alice.request.command)),
             source_tokens=nlu.lemmatize(["ответ"])
         ) >= 1.0:
             logging.info(f"User: {alice.session.user_id}: Handler->Повторить->Ответы")
-            return await repeat_answers(alice)
+            answers = repeat_answers(alice)
+            return alice.response(answers["text"], tts=answers["tts"], buttons=answers["buttons"])
 
     logging.info(f"User: {alice.session.user_id}: Handler->Повторить->Последний ответ")
     response = (await dp.storage.get_data(alice.session.user_id))
@@ -84,8 +91,8 @@ async def handle_repeat(alice: AliceRequest):
 async def repeat_question(alice: AliceRequest):
     state = State.from_request(alice)
     question = await models.Question.get(PydanticObjectId(state.session.current_question))
-    return alice.response_big_image(
-        question.full_text.src,
+    return dict(
+        text=question.full_text.src,
         tts=question.full_text.tts,
         image_id=question.images.yandex_id,
         title="",
@@ -93,17 +100,17 @@ async def repeat_question(alice: AliceRequest):
     )
 
 
-async def repeat_answers(alice: AliceRequest):
+def repeat_answers(alice: AliceRequest):
     state = State.from_request(alice)
 
     answers = state.session.current_answers
     text = "\n".join((
         "Варианты ответов:",
-        *[f"{i}: {answer.text.src}" for i, answer in answers]
+        *[f"{i}: {answer}" for i, answer in answers]
     ))
     tts = "\n".join((
         "Варианты ответов:",
-        *[f"{i}-й {answer.text.tts}" for i, answer in answers]
+        *[f"{i}-й {answer}" for i, answer in answers]
     ))
     buttons = [
         Button(
@@ -112,12 +119,7 @@ async def repeat_answers(alice: AliceRequest):
         )
         for i, text in answers
     ]
-
-    return alice.response(
-        text,
-        tts=tts,
-        buttons=buttons
-    )
+    return {"text": text, "tts": tts, "buttons": buttons}
 
 
 @dp.request_handler(filters.StartFilter(), state=None)
@@ -202,10 +204,7 @@ async def handler_question(alice: AliceRequest):
     answers = question.answers
     shuffle(answers)
     answers = [(index, answer) for index, answer in enumerate(answers, 1)]
-    text = "\n".join((
-        question.full_text.src, "\nВарианты ответов:",
-        *[f"{i}: {answer.text.src}" for i, answer in answers]
-    ))
+    text = question.full_text.src
     tts = "\n".join((
         question.full_text.tts, "Варианты ответов:",
         *[f"{i}-й {answer.text.tts}" for i, answer in answers]
@@ -215,7 +214,7 @@ async def handler_question(alice: AliceRequest):
                for i, answer in answers]
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
     state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
-    return alice.response(
+    return alice.response_big_image(
         text,
         tts=tts,
         session_state=state.session.dict(),
@@ -308,6 +307,7 @@ async def handler_hint(alice: AliceRequest):
     # Если у пользователя достаточно баллов, даем подсказку
     # Иначе не даем
     # TODO: Добавить убавление подсказок
+    logging.info(f"User: {alice.session.user_id}: Handler->Отправка подсказки")
     await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
     state = State.from_request(alice)
     question_id = state.session.current_question
