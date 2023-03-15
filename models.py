@@ -36,7 +36,6 @@ class Answer(BaseModel):
     text: Text
     description: Text
     is_true: bool = False
-    image: Optional[Image]
 
 
 # Модель из БД
