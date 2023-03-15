@@ -74,7 +74,7 @@ def calculate_correct_answer_by_text(
 def check_user_answer(alice: AliceRequest) -> tuple[bool, Optional[Diff]]:
     state = State.from_request(alice)
     if alice.request.type == "ButtonPressed":
-        logging.info(f"True answer button clicked")
+        logging.info(f"Answer button clicked")
         answer_number = alice.request.payload["number"]
         return alice.request.payload.get("is_true", False), \
                Diff(

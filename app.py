@@ -126,7 +126,6 @@ def repeat_answers(alice: AliceRequest):
 @can_repeat
 async def handle_start(alice: AliceRequest):
     logging.info(f"Handler->Старт")
-    print(alice._raw_kwargs["state"])
     await dp.storage.set_state(alice.session.user_id, GameStates.START)
     answer = "Уважаемые студенты, рада видеть вас на своей лекции. " \
              "Я профессор исторических наук, Аврора Хистория. " \
@@ -182,7 +181,7 @@ async def handle_reject_game(alice: AliceRequest):
     return alice.response(answer, end_session=True)
 
 
-@dp.request_handler(state=GameStates.QUESTION_TIME)
+@dp.request_handler(filters.ConfirmFilter(), state=GameStates.QUESTION_TIME)
 @can_repeat
 async def handler_question(alice: AliceRequest):
     # Получить случайный вопрос
@@ -206,7 +205,9 @@ async def handler_question(alice: AliceRequest):
 
     question: models.Question = models.Question.parse_obj(data[0])
     state.session.current_question = str(question.id)
-
+    state.session.passed_questions.append(
+        state.session.current_question
+    )
     answers = question.answers
     shuffle(answers)
     answers = [(index, answer) for index, answer in enumerate(answers, 1)]
@@ -231,6 +232,11 @@ async def handler_question(alice: AliceRequest):
     )
 
 
+@dp.request_handler(filters.RejectFilter(), state=GameStates.QUESTION_TIME)
+async def handler_reject_question(alice: AliceRequest):
+    return await handler_end(alice)
+
+
 @dp.request_handler(state=GameStates.GUESS_ANSWER)
 async def handler_quess_answer(alice: AliceRequest):
     is_true_answer, diff = nlu.check_user_answer(alice)
@@ -246,9 +252,6 @@ async def handler_true_answer(alice: AliceRequest):
     state = State.from_request(alice)
     state.user.score += 1
 
-    state.session.passed_questions.append(
-        state.session.current_question
-    )
     await dp.storage.set_state(alice.session.user_id, state=GameStates.FACT)
     session = state.session
     answer_text = session.current_answers[session.current_true_answer - 1][1]
@@ -333,6 +336,7 @@ async def handler_hint(alice: AliceRequest):
     return await handler_fact_confirm(alice)
 
 
+@can_repeat
 async def handler_end(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Заключение")
     await dp.storage.set_state(alice.session.user_id, GameStates.END)
@@ -344,14 +348,14 @@ async def handler_end(alice: AliceRequest):
     return alice.response(text)
 
 
-@dp.request_handler(filters.RejectFilter(), state=GameStates.END)
+@dp.request_handler(filters.ConfirmFilter(), state=GameStates.END)
 async def handler_restart_game(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Перезапуск игры")
-    alice._raw_kwargs["state"] = {}
-    return handler_question(alice)
+    alice._raw_kwargs["state"]["session"] = {}
+    return await handler_question(alice)
 
 
-@dp.request_handler(filters.ConfirmFilter(), state=GameStates.END)
+@dp.request_handler(filters.RejectFilter(), state=GameStates.END)
 async def handler_confirm_close_game(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Завершение игры")
     return alice.response("👋", end_session=True)
@@ -359,11 +363,11 @@ async def handler_confirm_close_game(alice: AliceRequest):
 
 # TODO: 
 # 1. Отображать статистику игрока ака "Процент успешности"
-@dp.request_handler(state=None)
-async def handle_intent(alice: AliceRequest):
-    data = alice.request.nlu._raw_kwargs
-    answer = f"Intents: {data['intents']}\nTokens: {data['tokens']}"
-    return alice.response(answer, tts='ДА<speaker audio="alice-sounds-things-explosion-1.opus">')
+# @dp.request_handler(state=None)
+# async def handle_intent(alice: AliceRequest):
+#     data = alice.request.nlu._raw_kwargs
+#     answer = f"Intents: {data['intents']}\nTokens: {data['tokens']}"
+#     return alice.response(answer, tts='ДА<speaker audio="alice-sounds-things-explosion-1.opus">')
 
 
 @dp.errors_handler()
@@ -376,13 +380,19 @@ async def the_only_errors_handler(alice, e):
 async def log_middleware(request: Request, handler):
     data = await request.json()
     _request = data["request"]
+    user_id = data['session']['user_id']
+    user_fsm_state = await dp.storage.get_state(user_id)
     logging.info(
-        f"User ({data['session']['user_id']}) enter"
+        f"User ({user_id}) enter"
         f"\nCommand: {_request.get('command', None)}"
         f"\nToken: {_request['nlu']['tokens']}"
+        f"\nFSM State: {user_fsm_state}"
     )
     response = await handler(request)
-    logging.info("User exit")
+    logging.info(
+        f"User ({user_id}) exit"
+        f"\nFSM State: {user_fsm_state}"
+    )
     return response
 
 
