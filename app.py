@@ -386,6 +386,7 @@ async def log_middleware(request: Request, handler):
         f"User ({user_id}) enter"
         f"\nCommand: {_request.get('command', None)}"
         f"\nToken: {_request['nlu']['tokens']}"
+        f"\nIntents: {_request['nlu']['intents']}"
         f"\nFSM State: {user_fsm_state}"
     )
     response = await handler(request)
