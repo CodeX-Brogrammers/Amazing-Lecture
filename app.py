@@ -325,7 +325,7 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
 
     additional_text = []
     if state.session.number_of_hints > 0 and state.session.try_number < 1:
-        logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ"):
+        logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ")
         additional_text.append("Попробуте ещё раз отгадать ответ.")
         additional_text.append("Хотите получить подсказку ?")
         state.session.try_number += 1
