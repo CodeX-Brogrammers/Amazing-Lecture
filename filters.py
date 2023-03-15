@@ -52,7 +52,7 @@ class RestartFilter(Filter):
 
 class CanDoFilter(Filter):
     def check(self, alice: AliceRequest):
-        return _check_included_intent_names(alice, ["WHATCANDO"])
+        return _check_included_intent_names(alice, ["WHATCANDO", "YANDEX.WHAT_CAN_YOU_DO"])
 
 
 class StartFilter(Filter):
