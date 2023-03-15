@@ -5,6 +5,8 @@ import enum
 from aioalice.dispatcher.filters import Filter
 from aioalice.types import AliceRequest
 
+import nlu
+
 
 class Operation(enum.Enum):
     LE = le
@@ -42,7 +44,8 @@ class RepeatFilter(Filter):
 
 class HelpFilter(Filter):
     def check(self, alice: AliceRequest):
-        return _check_included_intent_names(alice, ["YANDEX.HELP", "HELP"])
+        return _check_included_intent_names(alice, ["YANDEX.HELP", "HELP"]) \
+               and "подсказка" not in nlu.lemmatize(alice.request.nlu.tokens)
 
 
 class RestartFilter(Filter):
@@ -69,3 +72,14 @@ class ScoreFilter(Filter):
     def check(self, alice: AliceRequest):
         score = alice._raw_kwargs["state"][self.state_type].get("score", 0)
         return self.operation(score, self.count)
+
+
+class TextContainFilter(Filter):
+    def __init__(self, initial_tokens: list[str]):
+        self.init_tokens = nlu.lemmatize(initial_tokens)
+
+    def check(self, alice: AliceRequest):
+        user_tokens = nlu.lemmatize(
+            nlu.tokenizer(alice.request.command)
+        )
+        return nlu.calculate_coincidence(user_tokens, self.init_tokens) > 0.33

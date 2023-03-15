@@ -10,6 +10,8 @@ class SessionState(BaseModel):
     current_answers: Optional[list[tuple[int, str]]] = Field(default_factory=list)
     current_true_answer: Optional[int] = Field(default=None)
     current_question: Optional[str] = None
+    number_of_hints: int = 5
+    try_number: int = 0
 
 
 class UserState(BaseModel):

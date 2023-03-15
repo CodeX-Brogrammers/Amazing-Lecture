@@ -23,6 +23,10 @@ import nlu
 # - Session state надо передавать в каждый запрос
 # - Повтори ответы
 
+# TODO:
+# | -> ответ на вопрос: сколько подсказок осталось
+# | -> ответ на команду: подсказка
+
 WEBHOOK_URL_PATH = '/post'  # webhook endpoint
 
 WEBAPP_HOST = getenv("APP_ADDRESS", "localhost")
@@ -47,12 +51,23 @@ dp = Dispatcher(storage=MemoryStorage())  # Сделать Хранилище с
 app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
 
 
-def can_repeat(func: Callable):
+def mixin_can_repeat(func: Callable):
     async def wrapper(alice: AliceRequest, *args, **kwargs):
         response = await func(alice, *args, **kwargs)
         await dp.storage.set_data(alice.session.user_id, {"last": response})
         return response
 
+    return wrapper
+
+
+def mixin_state(func: Callable):
+    async def wrapper(alice: AliceRequest, *args, **kwargs):
+        state = State.from_request(alice)
+        response = await func(alice, *args, state=state, **kwargs)
+        response.session_state = response.session_state | state.session.dict()
+        response.user_state_update = response.user_state_update | state.user.dict()
+        response.application_state = response.application_state | state.application
+        return response
     return wrapper
 
 
@@ -78,6 +93,7 @@ async def handle_repeat(alice: AliceRequest):
             input_tokens=nlu.lemmatize(nlu.tokenizer(alice.request.command)),
             source_tokens=nlu.lemmatize(["ответ"])
         ) >= 1.0:
+            await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
             logging.info(f"User: {alice.session.user_id}: Handler->Повторить->Ответы")
             answers = repeat_answers(alice)
             return alice.response(answers["text"], tts=answers["tts"], buttons=answers["buttons"])
@@ -123,7 +139,7 @@ def repeat_answers(alice: AliceRequest):
 
 
 @dp.request_handler(filters.StartFilter(), state=None)
-@can_repeat
+@mixin_can_repeat
 async def handle_start(alice: AliceRequest):
     logging.info(f"Handler->Старт")
     await dp.storage.set_state(alice.session.user_id, GameStates.START)
@@ -136,10 +152,8 @@ async def handle_start(alice: AliceRequest):
     return alice.response(answer, buttons=BUTTONS)
 
 
-# Обработчик "что ты умеешь" до игры
-# TODO: расширить набор команд
 @dp.request_handler(filters.CanDoFilter(), state="*")
-@can_repeat
+@mixin_can_repeat
 async def handle_can_do(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Что ты умеешь")
     answer = "Навык будет задавать вам вопросы и предлагать варианты ответов. " \
@@ -151,9 +165,8 @@ async def handle_can_do(alice: AliceRequest):
     return alice.response(answer)
 
 
-# Обработчик помощи до игры
 @dp.request_handler(filters.HelpFilter(), state="*")
-@can_repeat
+@mixin_can_repeat
 async def handle_help(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Помощь")
     answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие." \
@@ -166,8 +179,42 @@ async def handle_help(alice: AliceRequest):
     return alice.response(answer)
 
 
+@dp.request_handler(filters.TextContainFilter(["подсказка"]), state="*")
+@mixin_can_repeat
+@mixin_state
+async def handler_hint(alice: AliceRequest, state: State):
+    # Получить ID вопроса из State-а
+    # Если у пользователя достаточно баллов, даем подсказку
+    # Иначе не даем
+    user_tokens = nlu.lemmatize(alice.request.nlu.tokens)
+    number_of_hints = state.session.number_of_hints
+    if number_of_hints == 0:
+        logging.info(f"User: {alice.session.user_id}: Handler->Подсказка->Больше нет подсказок")
+        return alice.response(f"У вас уже закончились все подсказки")
+
+    fsm_state = await dp.storage.get_state(alice.session.user_id)
+    if "сколько" in user_tokens \
+            or "остаться" in user_tokens \
+            or fsm_state.upper() not in ("QUESTION_TIME", "GUESS_ANSWER", "HINT"):
+        logging.info(f"User: {alice.session.user_id}: Handler->Подсказка->Сколько осталось")
+        return alice.response(f"У вас есть ещё {number_of_hints} подсказок")
+
+    logging.info(f"User: {alice.session.user_id}: Handler->Подсказка->Отправка")
+    await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
+    question_id = state.session.current_question
+    question = await models.Question.get(PydanticObjectId(question_id))
+    answers = repeat_answers(alice)
+    state.session.number_of_hints -= 1
+    return alice.response(
+        "\n".join(("Подсказка:", question.hint.src)),
+        tts="\n".join(("Подсказка:", question.hint.tts)),
+        buttons=answers["buttons"],
+        session_state=state.session.dict()
+    )
+
+
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.START)
-@can_repeat
+@mixin_can_repeat
 async def handle_start_game(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Начать игру")
     return await handler_question(alice)
@@ -182,7 +229,7 @@ async def handle_reject_game(alice: AliceRequest):
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.QUESTION_TIME)
-@can_repeat
+@mixin_can_repeat
 async def handler_question(alice: AliceRequest):
     # Получить случайный вопрос
     # TODO: что-то придумать для исключения вопросов из пулла после их проходения
@@ -238,18 +285,18 @@ async def handler_reject_question(alice: AliceRequest):
 
 
 @dp.request_handler(state=GameStates.GUESS_ANSWER)
-async def handler_quess_answer(alice: AliceRequest):
+@mixin_state
+async def handler_quess_answer(alice: AliceRequest, state: State):
     is_true_answer, diff = nlu.check_user_answer(alice)
     if is_true_answer:
-        return await handler_true_answer(alice)
-    return await handler_false_answer(alice, diff)
+        return await handler_true_answer(alice, state=state)
+    return await handler_false_answer(alice, diff=diff, state=state)
 
 
-async def handler_true_answer(alice: AliceRequest):
+async def handler_true_answer(alice: AliceRequest, state: State):
     # Получить ID вопроса из State-а
     # Если ответ верный, добавить балл
     logging.info(f"User: {alice.session.user_id}: Handler->Отгадал ответ")
-    state = State.from_request(alice)
     state.user.score += 1
 
     await dp.storage.set_state(alice.session.user_id, state=GameStates.FACT)
@@ -262,32 +309,43 @@ async def handler_true_answer(alice: AliceRequest):
     return alice.response(
         "\n".join((answer.description.src, fact_text)),
         tts="\n".join((answer.description.tts, fact_text)),
-        user_state_update=state.user.dict(),
-        session_state=state.session.dict(),
         buttons=[OK_Button, REJECT_Button]
     )
 
 
-async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff]):
+async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff], state: State):
     # Получить ID вопроса из State-а
     # Если ответ неверный, предложить подсказку или отказаться
-    logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ")
     if diff is None:
         return alice.response("Извините, я вас не понимаю, повторите пожалуйста")
 
     await dp.storage.set_state(alice.session.user_id, state=GameStates.HINT)
-    state = State.from_request(alice)
-    question = await models.Question.get(state.session.current_question)
+    question = await models.Question.get(PydanticObjectId(state.session.current_question))
     answer = [answer for answer in question.answers if answer.text.src == diff.answer][0]
+
+    additional_text = []
+    if state.session.number_of_hints > 0 and state.session.try_number < 1:
+        logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ")
+        additional_text.append("Хотите получить подсказку ?")
+        state.session.try_number += 1
+    elif state.session.number_of_hints <= 0 and state.session.try_number <= 1:
+        additional_text.append("Попробуте ещё раз отгадать ответ.")
+    else:
+        logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ 2 раза")
+        await dp.storage.set_state(alice.session.user_id, state=GameStates.FACT)
+        true_answer = state.session.current_answers[state.session.current_true_answer - 1]
+        additional_text.append(f"Верный ответ был: {true_answer[1]}")
+        additional_text.append(choice(FACT_ANSWER))
+
     return alice.response(
-        "\n".join((answer.description.src, "Хотите получить подсказку ?")),
-        tts="\n".join((answer.description.tts, "Хотите получить подсказку ?")),
+        "\n".join((answer.description.src, *additional_text)),
+        tts="\n".join((answer.description.tts, *additional_text)),
         buttons=[OK_Button, REJECT_Button]
     )
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.FACT)
-@can_repeat
+@mixin_can_repeat
 async def handler_fact_confirm(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Отправка факта")
     state = State.from_request(alice)
@@ -303,40 +361,26 @@ async def handler_fact_confirm(alice: AliceRequest):
 
 
 @dp.request_handler(filters.RejectFilter(), state=GameStates.FACT)
-@can_repeat
+@mixin_can_repeat
 async def handler_fact_reject(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Отказ от факта")
     return await handler_question(alice)
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.HINT)
-@can_repeat
-async def handler_hint(alice: AliceRequest):
-    # Получить ID вопроса из State-а
-    # Если у пользователя достаточно баллов, даем подсказку
-    # Иначе не даем
-    # TODO: Добавить убавление подсказок
-    logging.info(f"User: {alice.session.user_id}: Handler->Отправка подсказки")
-    await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
-    state = State.from_request(alice)
-    question_id = state.session.current_question
-    question = await models.Question.get(PydanticObjectId(question_id))
-    answers = repeat_answers(alice)
-    return alice.response(
-        "\n".join(("Подсказка:", question.hint.src)),
-        tts="\n".join(("Подсказка:", question.hint.tts)),
-        buttons=answers["buttons"]
-    )
+@mixin_can_repeat
+async def handler_confirm_hint(alice: AliceRequest):
+    return await handler_hint(alice)
 
 
 @dp.request_handler(filters.RejectFilter(), state=GameStates.HINT)
-@can_repeat
-async def handler_hint(alice: AliceRequest):
+@mixin_can_repeat
+async def handler_reject_hint(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Отказ от подсказки")
     return await handler_fact_confirm(alice)
 
 
-@can_repeat
+@mixin_can_repeat
 async def handler_end(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Заключение")
     await dp.storage.set_state(alice.session.user_id, GameStates.END)
@@ -363,11 +407,10 @@ async def handler_confirm_close_game(alice: AliceRequest):
 
 # TODO: 
 # 1. Отображать статистику игрока ака "Процент успешности"
-# @dp.request_handler(state=None)
-# async def handle_intent(alice: AliceRequest):
-#     data = alice.request.nlu._raw_kwargs
-#     answer = f"Intents: {data['intents']}\nTokens: {data['tokens']}"
-#     return alice.response(answer, tts='ДА<speaker audio="alice-sounds-things-explosion-1.opus">')
+@dp.request_handler(state="*")
+async def handle_all(alice: AliceRequest):
+    logging.info(f"User: {alice.session.user_id}: Handler->Общий обработчик")
+    return alice.response("Извините, я вас не понимаю, повторите пожалуйста")
 
 
 @dp.errors_handler()
