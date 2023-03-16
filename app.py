@@ -268,6 +268,7 @@ async def handler_question(alice: AliceRequest):
                for i, answer in answers]
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
     state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
+    state.session.try_number = 0
     return alice.response_big_image(
         text,
         tts=tts,
@@ -328,18 +329,16 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
         logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ")
         additional_text.append("Попробуте ещё раз отгадать ответ.")
         additional_text.append("Хотите получить подсказку ?")
-        state.session.try_number += 1
     elif state.session.number_of_hints <= 0 and state.session.try_number <= 1:
         additional_text.append("Попробуте ещё раз отгадать ответ.")
-        state.session.try_number += 1
     else:
         logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ 2 раза")
         await dp.storage.set_state(alice.session.user_id, state=GameStates.FACT)
         true_answer = state.session.current_answers[state.session.current_true_answer - 1]
         additional_text.append(f"Верный ответ был: {true_answer[1]}")
         additional_text.append(choice(FACT_ANSWER))
-        state.session.try_number = 0
 
+    state.session.try_number += 1
     return alice.response(
         "\n".join((answer.description.src, *additional_text)),
         tts="\n".join((answer.description.tts, *additional_text)),
