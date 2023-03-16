@@ -1,9 +1,10 @@
-import logging
+from functools import lru_cache
 from operator import attrgetter
 from typing import Optional
+import logging
 
-import pymorphy2
 from aioalice.types import AliceRequest
+import pymorphy2
 
 from models import Diff
 from state import State
@@ -98,6 +99,12 @@ def check_user_answer(alice: AliceRequest) -> tuple[bool, Optional[Diff]]:
         return state.session.current_true_answer == diff.number, diff
 
     return False, None
+
+
+@lru_cache()
+def declension_of_word_after_numeral(word: str, number: int) -> str:
+    word = morph.parse(word)[0]
+    return word.make_agree_with_number(number).word
 
 
 if __name__ == '__main__':

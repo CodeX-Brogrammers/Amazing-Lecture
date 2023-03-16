@@ -1,13 +1,15 @@
-from random import choice, shuffle
 from typing import Callable, Optional
+from random import choice, shuffle
+from functools import wraps
 from os import getenv
 import logging
 import json
 
-from aioalice.types import AliceRequest, Button, MediaButton
 from aioalice import Dispatcher, get_new_configured_app
 from aioalice.dispatcher.storage import MemoryStorage
+from aioalice.types import AliceRequest, Button
 from aiohttp.web_request import Request
+from aiohttp.web_response import Response
 from beanie import PydanticObjectId
 from aiohttp import web
 
@@ -38,6 +40,7 @@ logging.basicConfig(format=u'%(filename)s [LINE:%(lineno)d] #%(levelname)-8s [%(
 OK_Button = Button('Да')
 REJECT_Button = Button('Нет')
 REPEAT_Button = Button('Повтори')
+HINT_Button = Button('Подсказка')
 BUTTONS = [OK_Button, REJECT_Button, REPEAT_Button]
 
 POSSIBLE_ANSWER = ("Начинаем ?", "Готовы начать ?", "Поехали ?")
@@ -52,6 +55,7 @@ app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
 
 
 def mixin_can_repeat(func: Callable):
+    @wraps(func)
     async def wrapper(alice: AliceRequest, *args, **kwargs):
         response = await func(alice, *args, **kwargs)
         await dp.storage.set_data(alice.session.user_id, {"last": response})
@@ -61,6 +65,7 @@ def mixin_can_repeat(func: Callable):
 
 
 def mixin_state(func: Callable):
+    @wraps(func)
     async def wrapper(alice: AliceRequest, *args, **kwargs):
         state = State.from_request(alice)
         response = await func(alice, *args, state=state, **kwargs)
@@ -68,6 +73,7 @@ def mixin_state(func: Callable):
         response.user_state_update = response.user_state_update | state.user.dict()
         response.application_state = response.application_state | state.application
         return response
+
     return wrapper
 
 
@@ -77,8 +83,8 @@ async def handle_repeat(alice: AliceRequest):
     state = await dp.storage.get_state(alice.session.user_id)
     if state.upper() in ("QUESTION_TIME", "GUESS_ANSWER", "HINT"):
         if nlu.calculate_coincidence(
-            input_tokens=nlu.lemmatize(nlu.tokenizer(alice.request.command)),
-            source_tokens=nlu.lemmatize(["вопрос"])
+                input_tokens=nlu.lemmatize(nlu.tokenizer(alice.request.command)),
+                source_tokens=nlu.lemmatize(["вопрос"])
         ) >= 1.0:
             logging.info(f"User: {alice.session.user_id}: Handler->Повторить->Вопрос")
             question = await repeat_question(alice)
@@ -90,8 +96,8 @@ async def handle_repeat(alice: AliceRequest):
             )
 
         if nlu.calculate_coincidence(
-            input_tokens=nlu.lemmatize(nlu.tokenizer(alice.request.command)),
-            source_tokens=nlu.lemmatize(["ответ"])
+                input_tokens=nlu.lemmatize(nlu.tokenizer(alice.request.command)),
+                source_tokens=nlu.lemmatize(["ответ"])
         ) >= 1.0:
             await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
             logging.info(f"User: {alice.session.user_id}: Handler->Повторить->Ответы")
@@ -179,7 +185,15 @@ async def handle_help(alice: AliceRequest):
     return alice.response(answer)
 
 
-@dp.request_handler(filters.TextContainFilter(["подсказка"]), state="*")
+@dp.request_handler(
+    filters.TextContainFilter(["подсказка"]),
+    filters.OneOfStatesFilter(dp, [
+        GameStates.QUESTION_TIME,
+        GameStates.GUESS_ANSWER,
+        GameStates.FACT
+    ]),
+    state="*"
+)
 @mixin_can_repeat
 @mixin_state
 async def handler_hint(alice: AliceRequest, state: State):
@@ -190,26 +204,42 @@ async def handler_hint(alice: AliceRequest, state: State):
     number_of_hints = state.session.number_of_hints
     if number_of_hints == 0:
         logging.info(f"User: {alice.session.user_id}: Handler->Подсказка->Больше нет подсказок")
-        return alice.response(f"У вас уже закончились все подсказки")
+        return alice.response(f"У вас уже закончились все подсказки. ")
 
     fsm_state = await dp.storage.get_state(alice.session.user_id)
-    if "сколько" in user_tokens \
-            or "остаться" in user_tokens \
-            or fsm_state.upper() not in ("QUESTION_TIME", "GUESS_ANSWER", "HINT"):
+    if "сколько" in user_tokens or "остаться" in user_tokens:
         logging.info(f"User: {alice.session.user_id}: Handler->Подсказка->Сколько осталось")
-        return alice.response(f"У вас есть ещё {number_of_hints} подсказок")
+        buttons = []
+        if fsm_state.upper() in ("QUESTION_TIME", "GUESS_ANSWER"):
+            buttons = repeat_answers(alice)["buttons"]
+        return alice.response(
+            f"У вас есть ещё {number_of_hints}  "
+            f"{nlu.declension_of_word_after_numeral('подсказка', number_of_hints)}. ",
+            buttons=buttons
+        )
+
+    if last_response := (await dp.storage.get_data(alice.session.user_id)).get("last", None):
+        if "Подсказка: \n" in last_response.response.text:
+            last_response.response.text = last_response.response.text.rsplit("\n", 1)[0]
+            return last_response
 
     logging.info(f"User: {alice.session.user_id}: Handler->Подсказка->Отправка")
     await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
     question_id = state.session.current_question
     question = await models.Question.get(PydanticObjectId(question_id))
     answers = repeat_answers(alice)
+
     state.session.number_of_hints -= 1
+    number_of_hints = state.session.number_of_hints
+    if number_of_hints > 0:
+        left_hints = f"У вас есть ещё {number_of_hints}  " \
+                     f"{nlu.declension_of_word_after_numeral('подсказка', number_of_hints)}. "
+    else:
+        left_hints = "К сожалению, у вас не осталось больше подсказок. "
     return alice.response(
-        "\n".join(("Подсказка:", question.hint.src)),
-        tts="\n".join(("Подсказка:", question.hint.tts)),
-        buttons=answers["buttons"],
-        session_state=state.session.dict()
+        "\n".join(("Подсказка: ", question.hint.src, left_hints)),
+        tts="\n".join(("Подсказка: ", question.hint.tts, left_hints)),
+        buttons=answers["buttons"]
     )
 
 
@@ -320,29 +350,34 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
     if diff is None:
         return alice.response("Извините, я вас не понимаю, повторите пожалуйста")
 
-    await dp.storage.set_state(alice.session.user_id, state=GameStates.HINT)
+    await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
     question = await models.Question.get(PydanticObjectId(state.session.current_question))
     answer = [answer for answer in question.answers if answer.text.src == diff.answer][0]
 
     additional_text = []
+    buttons = []
     if state.session.number_of_hints > 0 and state.session.try_number < 1:
         logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ")
-        additional_text.append("Попробуте ещё раз отгадать ответ.")
-        additional_text.append("Хотите получить подсказку ?")
+        additional_text.append("Попробуте ещё раз отгадать ответ. ")
+        additional_text.append("Напоминаю, что вы можете использовать подсказку. ")
+        buttons.append(HINT_Button)
+        buttons += repeat_answers(alice)["buttons"]
     elif state.session.number_of_hints <= 0 and state.session.try_number <= 1:
-        additional_text.append("Попробуте ещё раз отгадать ответ.")
+        additional_text.append("Попробуте ещё раз отгадать ответ. ")
+        buttons += repeat_answers(alice)["buttons"]
     else:
         logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ 2 раза")
         await dp.storage.set_state(alice.session.user_id, state=GameStates.FACT)
         true_answer = state.session.current_answers[state.session.current_true_answer - 1]
-        additional_text.append(f"Верный ответ был: {true_answer[1]}")
+        additional_text.append(f"Верный ответ был: {true_answer[1]} ")
         additional_text.append(choice(FACT_ANSWER))
+        buttons = [OK_Button, REJECT_Button]
 
     state.session.try_number += 1
     return alice.response(
         "\n".join((answer.description.src, *additional_text)),
         tts="\n".join((answer.description.tts, *additional_text)),
-        buttons=[OK_Button, REJECT_Button]
+        buttons=buttons
     )
 
 
@@ -358,7 +393,8 @@ async def handler_fact_confirm(alice: AliceRequest):
     await dp.storage.set_state(alice.session.user_id, state=GameStates.QUESTION_TIME)
     return alice.response(
         "\n".join((question.fact.src, continue_answer)),
-        tts="\n".join((question.fact.tts, continue_answer))
+        tts="\n".join((question.fact.tts, continue_answer)),
+        buttons=[OK_Button, REJECT_Button]
     )
 
 
@@ -367,19 +403,6 @@ async def handler_fact_confirm(alice: AliceRequest):
 async def handler_fact_reject(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Отказ от факта")
     return await handler_question(alice)
-
-
-@dp.request_handler(filters.ConfirmFilter(), state=GameStates.HINT)
-@mixin_can_repeat
-async def handler_confirm_hint(alice: AliceRequest):
-    return await handler_hint(alice)
-
-
-@dp.request_handler(filters.RejectFilter(), state=GameStates.HINT)
-@mixin_can_repeat
-async def handler_reject_hint(alice: AliceRequest):
-    logging.info(f"User: {alice.session.user_id}: Handler->Отказ от подсказки")
-    return await handler_fact_confirm(alice)
 
 
 @mixin_can_repeat
@@ -422,6 +445,13 @@ async def the_only_errors_handler(alice, e):
 
 
 @web.middleware
+async def only_post_request_middleware(request: Request, handler):
+    if request.method.upper() != "POST":
+        return Response(status=403)
+    return await handler(request)
+
+
+@web.middleware
 async def log_middleware(request: Request, handler):
     data = await request.json()
     _request = data["request"]
@@ -455,6 +485,11 @@ async def session_state_middleware(request, handler):
 
 if __name__ == '__main__':
     app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
+    app.router.add_route("*", "/{tail:.*}", lambda _: Response(status=403))
     app.on_startup.append(models.init_database)
-    app.middlewares.extend((log_middleware, session_state_middleware))
+    app.middlewares.extend((
+        only_post_request_middleware,
+        log_middleware,
+        session_state_middleware
+    ))
     web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT, loop=dp.loop)
