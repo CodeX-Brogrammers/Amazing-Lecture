@@ -338,6 +338,7 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
         true_answer = state.session.current_answers[state.session.current_true_answer - 1]
         additional_text.append(f"Верный ответ был: {true_answer[1]}")
         additional_text.append(choice(FACT_ANSWER))
+        state.session.try_number = 0
 
     return alice.response(
         "\n".join((answer.description.src, *additional_text)),
