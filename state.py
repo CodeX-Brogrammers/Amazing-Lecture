@@ -19,9 +19,9 @@ class UserState(BaseModel):
 
 
 class State(BaseModel):
-    session: SessionState
-    user: UserState
-    application: dict
+    session: SessionState = SessionState()
+    user: UserState = UserState()
+    application: dict = Field(default_factory=dict)
 
     @classmethod
     def from_request(cls, alice: AliceRequest):
