@@ -1,3 +1,4 @@
+import time
 from typing import Callable, Optional
 from random import choice, shuffle
 from functools import wraps
@@ -126,11 +127,11 @@ def repeat_answers(alice: AliceRequest):
     state = State.from_request(alice)
 
     answers = state.session.current_answers
-    text = "\n".join((
+    text = " \n".join((
         "Варианты ответов:",
         *[f"{i}: {answer}" for i, answer in answers]
     ))
-    tts = "\n".join((
+    tts = " \n".join((
         "Варианты ответов:",
         *[f"{i}-й {answer}" for i, answer in answers]
     ))
@@ -175,10 +176,10 @@ async def handle_can_do(alice: AliceRequest):
 @mixin_can_repeat
 async def handle_help(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Помощь")
-    answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие." \
-             "Продвигаясь все дальше вы будете отвечать на вопросы и зарабатывать баллы." \
+    answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие. " \
+             "Продвигаясь все дальше вы будете отвечать на вопросы и зарабатывать баллы. " \
              "Погрузитесь в атмосферу Древнего Рима, Средневековья," \
-             " Эпохи Возрождения вместе с замечательным проводником Авророй Хисторией."
+             " Эпохи Возрождения вместе с замечательным проводником Авророй Хисторией. "
     state = await dp.storage.get_state(alice.session.user_id)
     if state in ("DEFAULT_STATE", "*"):
         answer = f"{answer}\n{choice(POSSIBLE_ANSWER)}"
@@ -237,8 +238,8 @@ async def handler_hint(alice: AliceRequest, state: State):
     else:
         left_hints = "К сожалению, у вас не осталось больше подсказок. "
     return alice.response(
-        "\n".join(("Подсказка: ", question.hint.src, left_hints)),
-        tts="\n".join(("Подсказка: ", question.hint.tts, left_hints)),
+        " \n".join(("Подсказка: ", question.hint.src, left_hints)),
+        tts=" \n".join(("Подсказка: ", question.hint.tts, left_hints)),
         buttons=answers["buttons"]
     )
 
@@ -260,19 +261,19 @@ async def handle_reject_game(alice: AliceRequest):
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.QUESTION_TIME)
 @mixin_can_repeat
-async def handler_question(alice: AliceRequest):
+@mixin_state
+async def handler_question(alice: AliceRequest, state: State):
     # Получить случайный вопрос
-    # TODO: что-то придумать для исключения вопросов из пулла после их проходения
     # |-> Можно сохранять в сессии пройденные вопросы
     # Сохранить его ID в State
     # Отправить вопрос с вариантами ответов
     logging.info(f"User: {alice.session.user_id}: Handler->Получение вопроса")
-    state = State.from_request(alice)
-
+    start = time.time()
     await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
-
+    print(1, time.time() - start)
+    user_data = await models.UserData.get_user_data(alice.session.user_id)
     data = await models.Question.aggregate([
-        {'$match': {'_id': {'$nin': tuple(map(lambda q: PydanticObjectId(q), state.session.passed_questions))}}},
+        {'$match': {'_id': {'$nin': user_data.passed_questions}}},
         {"$sample": {"size": 1}}
     ]).to_list()
 
@@ -280,16 +281,18 @@ async def handler_question(alice: AliceRequest):
         logging.info(f"User: {alice.session.user_id}: Handler->Получение вопроса->вопросы закончились")
         return await handler_end(alice)
 
+    print(2, time.time() - start)
     question: models.Question = models.Question.parse_obj(data[0])
+    await user_data.add_passed_question(question.id)
+    state.session.question_passed += 1
     state.session.current_question = str(question.id)
-    state.session.passed_questions.append(
-        state.session.current_question
-    )
+
+    print(3, time.time() - start)
     answers = question.answers
     shuffle(answers)
     answers = [(index, answer) for index, answer in enumerate(answers, 1)]
     text = question.full_text.src
-    tts = "\n".join((
+    tts = " \n".join((
         question.full_text.tts, "Варианты ответов:",
         *[f"{i}-й {answer.text.tts}" for i, answer in answers]
     ))
@@ -299,10 +302,10 @@ async def handler_question(alice: AliceRequest):
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
     state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
     state.session.try_number = 0
+    print(4, time.time() - start)
     return alice.response_big_image(
         text,
         tts=tts,
-        session_state=state.session.dict(),
         buttons=buttons,
         image_id=question.image.yandex_id,
         title="",
@@ -328,7 +331,7 @@ async def handler_true_answer(alice: AliceRequest, state: State):
     # Получить ID вопроса из State-а
     # Если ответ верный, добавить балл
     logging.info(f"User: {alice.session.user_id}: Handler->Отгадал ответ")
-    state.user.score += 1
+    state.session.score += 1
 
     await dp.storage.set_state(alice.session.user_id, state=GameStates.FACT)
     session = state.session
@@ -338,8 +341,8 @@ async def handler_true_answer(alice: AliceRequest, state: State):
     fact_text = choice(FACT_ANSWER)
     state.session.current_question = None
     return alice.response(
-        "\n".join((answer.description.src, fact_text)),
-        tts="\n".join((answer.description.tts, fact_text)),
+        " \n".join((answer.description.src, fact_text)),
+        tts=" \n".join((answer.description.tts, fact_text)),
         buttons=[OK_Button, REJECT_Button]
     )
 
@@ -375,12 +378,13 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
 
     state.session.try_number += 1
     return alice.response(
-        "\n".join((answer.description.src, *additional_text)),
-        tts="\n".join((answer.description.tts, *additional_text)),
+        " \n".join((answer.description.src, *additional_text)),
+        tts=" \n".join((answer.description.tts, *additional_text)),
         buttons=buttons
     )
 
 
+# TODO: хочу пропускать все интересные факты
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.FACT)
 @mixin_can_repeat
 async def handler_fact_confirm(alice: AliceRequest):
@@ -392,8 +396,8 @@ async def handler_fact_confirm(alice: AliceRequest):
     continue_answer = choice(CONTINUE_ANSWER)
     await dp.storage.set_state(alice.session.user_id, state=GameStates.QUESTION_TIME)
     return alice.response(
-        "\n".join((question.fact.src, continue_answer)),
-        tts="\n".join((question.fact.tts, continue_answer)),
+        " \n".join((question.fact.src, continue_answer)),
+        tts=" \n".join((question.fact.tts, continue_answer)),
         buttons=[OK_Button, REJECT_Button]
     )
 
@@ -406,15 +410,19 @@ async def handler_fact_reject(alice: AliceRequest):
 
 
 @mixin_can_repeat
-async def handler_end(alice: AliceRequest):
+@mixin_state
+async def handler_end(alice: AliceRequest, state: State):
     logging.info(f"User: {alice.session.user_id}: Handler->Заключение")
     await dp.storage.set_state(alice.session.user_id, GameStates.END)
-    text = "Что-ж мы прибываем на конечную станцию и наше путешествие подходит к концу.\n" \
-           "Это было крайне увлекательно!\n" \
-           "Я давно не встречала таких интересных людей, как вы!\n" \
-           "Спасибо за наше путешествие. Возвращайтесь почаще, наш поезд всегда вас ждёт!\n" \
+    text = "Что-ж мы прибываем на конечную станцию и наше путешествие подходит к концу. \n" \
+           "Это было крайне увлекательно! \n" \
+           "Я давно не встречала таких интересных людей, как вы! \n" \
+           f"Вы ответили верно на {state.session.score} вопросов из {state.session.question_passed}. \n" \
+           "Спасибо за наше путешествие. Возвращайтесь почаще, наш поезд всегда вас ждёт! \n" \
            "Желаете начать заново?"
-    return alice.response(text)
+    state.session.score = 0
+    state.session.question_passed = 0
+    return alice.response(text, buttons=[OK_Button, REJECT_Button])
 
 
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.END)
@@ -427,7 +435,7 @@ async def handler_restart_game(alice: AliceRequest):
 @dp.request_handler(filters.RejectFilter(), state=GameStates.END)
 async def handler_confirm_close_game(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Завершение игры")
-    return alice.response("👋", end_session=True)
+    return alice.response("До новых встреч 👋", end_session=True)
 
 
 # TODO: 
@@ -435,13 +443,13 @@ async def handler_confirm_close_game(alice: AliceRequest):
 @dp.request_handler(state="*")
 async def handle_all(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Общий обработчик")
-    return alice.response("Извините, я вас не понимаю, повторите пожалуйста")
+    return alice.response("Извините, я вас не понимаю, повторите пожалуйста. ")
 
 
 @dp.errors_handler()
 async def the_only_errors_handler(alice, e):
     logging.error('An error!', exc_info=e)
-    return alice.response('Что-то пошло не так')
+    return alice.response('Что-то пошло не так. ')
 
 
 @web.middleware

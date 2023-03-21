@@ -1,10 +1,10 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 from os import getenv
 import asyncio
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, conlist, root_validator
+from pydantic import BaseModel, conlist, root_validator, Field
 
 from beanie import Document, Indexed, init_beanie, PydanticObjectId
 
@@ -38,6 +38,37 @@ class Answer(BaseModel):
     is_true: bool = False
 
 
+class QuestionStatistic(Document):
+    question_id: Indexed(str, unique=True)
+
+
+class UserData(Document):
+    user_id: Indexed(str, unique=True)
+    passed_questions: list[PydanticObjectId] = Field(default_factory=list)
+
+    @classmethod
+    async def get_user_data(cls, user_id: str) -> "UserData":
+        user_data = await cls.find_one({"user_id": user_id})
+
+        if user_data is None:
+            user_data = UserData(user_id=user_id)
+            await user_data.save()
+
+        return user_data
+
+    async def add_passed_question(self, question_id: Union[str, PydanticObjectId]):
+        if question_id not in self.passed_questions:
+            if isinstance(question_id, str):
+                question_id = PydanticObjectId(question_id)
+            self.passed_questions.append(question_id)
+            await self.save()
+
+"""
+user_id
+|-> Пройденные верно вопросы list(question_id)
+|-> Пройденные неверно вопросы list(question_id)
+"""
+
 # Модель из БД
 class Question(Document):
     full_text: Text
@@ -53,7 +84,7 @@ class Question(Document):
 
 async def init_database(*_):
     client = AsyncIOMotorClient(getenv("MONGO_URL"))
-    await init_beanie(database=client["QUEST"], document_models=[Question])
+    await init_beanie(database=client["QUEST"], document_models=[Question, UserData])
 
 
 # This is an asynchronous example, so we will access it from an async function
@@ -72,13 +103,23 @@ async def example():
         PydanticObjectId("640dd396fda67cd71b9c9f3b"),
     ]
     # Initialize beanie with the Product document class
-    await init_beanie(database=client["QUEST"], document_models=[Question])
+    await init_beanie(database=client["QUEST"], document_models=[Question, UserData])
 
+    data = await UserData.get_user_data("super123")
+    data.passed_questions = []
+    await data.save()
     data = await Question.aggregate([
-        {'$match': {'_id': {'$nin': tuple(map(lambda q: PydanticObjectId(q), ids))}}},
+        {'$match': {'_id': {'$nin': data.passed_questions}}},
         {"$sample": {"size": 1}}
     ]).to_list()
-    print(data)
+    print(*data, sep="\n")
+
+    #
+    # data = await UserData.get_user_data("super123")
+    # await data.add_passed_question("640dd396fda67cd71b9c9f3a")
+    # print(data)
+    # data = await UserData.get_user_data("super123")
+    # print(data)
 
 
 if __name__ == "__main__":

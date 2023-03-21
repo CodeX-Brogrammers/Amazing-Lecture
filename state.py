@@ -6,12 +6,13 @@ from aioalice.types import AliceRequest
 
 
 class SessionState(BaseModel):
-    passed_questions: Optional[list[str]] = Field(default_factory=list)
     current_answers: Optional[list[tuple[int, str]]] = Field(default_factory=list)
     current_true_answer: Optional[int] = Field(default=None)
     current_question: Optional[str] = None
+    question_passed: Optional[conint(ge=0)] = Field(0)
     number_of_hints: int = 5
     try_number: int = 0
+    score: Optional[conint(ge=0)] = Field(0)
 
 
 class UserState(BaseModel):
