@@ -186,6 +186,23 @@ async def handle_help(alice: AliceRequest):
     return alice.response(answer)
 
 
+@dp.request_handler(filters.EndFilter(), state="*")
+@mixin_can_repeat
+@mixin_state
+async def handler_end(alice: AliceRequest, state: State):
+    logging.info(f"User: {alice.session.user_id}: Handler->Заключение")
+    await dp.storage.set_state(alice.session.user_id, GameStates.END)
+    text = "Что-ж мы прибываем на конечную станцию и наше путешествие подходит к концу. \n" \
+           "Это было крайне увлекательно! \n" \
+           "Я давно не встречала таких интересных людей, как вы! \n" \
+           f"Вы ответили верно на {state.session.score} вопросов из {state.session.question_passed}. \n" \
+           "Спасибо за наше путешествие. Возвращайтесь почаще, наш поезд всегда вас ждёт! \n" \
+           "Желаете начать заново?"
+    state.session.score = 0
+    state.session.question_passed = 0
+    return alice.response(text, buttons=[OK_Button, REJECT_Button])
+
+
 @dp.request_handler(
     filters.TextContainFilter(["подсказка"]),
     filters.OneOfStatesFilter(dp, [
@@ -270,7 +287,6 @@ async def handler_question(alice: AliceRequest, state: State):
     logging.info(f"User: {alice.session.user_id}: Handler->Получение вопроса")
     start = time.time()
     await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
-    print(1, time.time() - start)
     user_data = await models.UserData.get_user_data(alice.session.user_id)
     data = await models.Question.aggregate([
         {'$match': {'_id': {'$nin': user_data.passed_questions}}},
@@ -279,15 +295,15 @@ async def handler_question(alice: AliceRequest, state: State):
 
     if len(data) == 0:
         logging.info(f"User: {alice.session.user_id}: Handler->Получение вопроса->вопросы закончились")
+        user_data.passed_questions = []
+        await user_data.save()
         return await handler_end(alice)
 
-    print(2, time.time() - start)
     question: models.Question = models.Question.parse_obj(data[0])
     await user_data.add_passed_question(question.id)
     state.session.question_passed += 1
     state.session.current_question = str(question.id)
 
-    print(3, time.time() - start)
     answers = question.answers
     shuffle(answers)
     answers = [(index, answer) for index, answer in enumerate(answers, 1)]
@@ -302,7 +318,6 @@ async def handler_question(alice: AliceRequest, state: State):
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
     state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
     state.session.try_number = 0
-    print(4, time.time() - start)
     return alice.response_big_image(
         text,
         tts=tts,
@@ -409,22 +424,6 @@ async def handler_fact_reject(alice: AliceRequest):
     return await handler_question(alice)
 
 
-@mixin_can_repeat
-@mixin_state
-async def handler_end(alice: AliceRequest, state: State):
-    logging.info(f"User: {alice.session.user_id}: Handler->Заключение")
-    await dp.storage.set_state(alice.session.user_id, GameStates.END)
-    text = "Что-ж мы прибываем на конечную станцию и наше путешествие подходит к концу. \n" \
-           "Это было крайне увлекательно! \n" \
-           "Я давно не встречала таких интересных людей, как вы! \n" \
-           f"Вы ответили верно на {state.session.score} вопросов из {state.session.question_passed}. \n" \
-           "Спасибо за наше путешествие. Возвращайтесь почаще, наш поезд всегда вас ждёт! \n" \
-           "Желаете начать заново?"
-    state.session.score = 0
-    state.session.question_passed = 0
-    return alice.response(text, buttons=[OK_Button, REJECT_Button])
-
-
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.END)
 async def handler_restart_game(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Перезапуск игры")
@@ -438,8 +437,6 @@ async def handler_confirm_close_game(alice: AliceRequest):
     return alice.response("До новых встреч 👋", end_session=True)
 
 
-# TODO: 
-# 1. Отображать статистику игрока ака "Процент успешности"
 @dp.request_handler(state="*")
 async def handle_all(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Общий обработчик")
