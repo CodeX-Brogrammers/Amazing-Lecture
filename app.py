@@ -156,7 +156,8 @@ async def handle_start(alice: AliceRequest):
              "Я хочу поговорить с вами о том, как история может стать настоящей сказкой. " \
              "Что если я отправлю вас в настоящий мир фантазий и историй? " \
              "Я уже подготовила наш волшебный поезд. Готовы ли вы отправиться в это путешествие? "
-    return alice.response(answer, buttons=BUTTONS)
+    return alice.response(answer, buttons=BUTTONS,
+                          tts=answer + '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/9484707f-a9ae-4a1c-b8da-8111e026a9a8.opus">')
 
 
 @dp.request_handler(filters.CanDoFilter(), state="*")
@@ -256,7 +257,9 @@ async def handler_hint(alice: AliceRequest, state: State):
         left_hints = "К сожалению, у вас не осталось больше подсказок. "
     return alice.response(
         " \n".join(("Подсказка: ", question.hint.src, left_hints)),
-        tts=" \n".join(("Подсказка: ", question.hint.tts, left_hints)),
+        tts=" \n".join((
+            '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/026b63b2-162e-4d0a-a60a-735b10adb15f.opus">',
+            "Подсказка: ", question.hint.tts, left_hints)),
         buttons=answers["buttons"]
     )
 
@@ -417,7 +420,9 @@ async def handler_fact_confirm(alice: AliceRequest):
     await dp.storage.set_state(alice.session.user_id, state=GameStates.QUESTION_TIME)
     return alice.response(
         " \n".join((question.fact.src, continue_answer)),
-        tts=" \n".join((question.fact.tts, continue_answer)),
+        tts=" \n".join((
+            '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/e0d1b286-3083-40c5-b40c-41cd5304f06c.opus">',
+            question.fact.tts, continue_answer)),
         buttons=[OK_Button, REJECT_Button]
     )
 
@@ -439,7 +444,11 @@ async def handler_restart_game(alice: AliceRequest):
 @dp.request_handler(filters.RejectFilter(), state=GameStates.END)
 async def handler_confirm_close_game(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Завершение игры")
-    return alice.response("До новых встреч 👋", end_session=True)
+    text = "До новых встреч 👋"
+    return alice.response(
+        text,
+        '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/c3b98c8b-7dc0-4b19-93be-cf6b5d77fb6b.opus">' + text,
+        end_session=True)
 
 
 @dp.request_handler(state="*")
