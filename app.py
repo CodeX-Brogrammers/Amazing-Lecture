@@ -497,7 +497,7 @@ async def session_state_middleware(request, handler):
     data = (await request.json())["state"]["session"]
     state = SessionState.parse_obj(data).dict()
     body = json.loads(response.body)
-    body["session_state"] = state | body["session_state"]
+    body["session_state"] = state | body.get("session_state", {})
     response.body = json.dumps(body)
     return response
 
