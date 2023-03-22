@@ -553,16 +553,24 @@ async def only_post_request_middleware(request: Request, handler):
 
 
 @web.middleware
+async def ping_request_middleware(request: Request, handler):
+    data = await request.json()
+    if data.get("request", {}).get("original_utterance", None) == "ping":
+        return web.json_response({"text": "pong"})
+    return await handler(request)
+
+
+@web.middleware
 async def log_middleware(request: Request, handler):
     data = await request.json()
     _request = data["request"]
-    user_id = data['session']['user_id']
+    user_id = data.get('session', {}).get('user_id', 0)
     user_fsm_state = await dp.storage.get_state(user_id)
     logging.info(
         f"User ({user_id}) enter"
         f"\nCommand: {_request.get('command', None)}"
-        f"\nToken: {_request['nlu']['tokens']}"
-        f"\nIntents: {_request['nlu']['intents']}"
+        f"\nToken: {_request.get('nlu', {}).get('tokens', None)}"
+        f"\nIntents: {_request.get('nlu', {}).get('intents', None)}"
         f"\nFSM State: {user_fsm_state}"
     )
     response = await handler(request)
@@ -576,7 +584,10 @@ async def log_middleware(request: Request, handler):
 @web.middleware
 async def session_state_middleware(request, handler):
     response = await handler(request)
-    data = (await request.json())["state"]["session"]
+    data = (await request.json()).get("state", {}).get("session", {})
+    if not data:
+        return response
+
     state = SessionState.parse_obj(data).dict()
     body = json.loads(response.body)
     body_state = body.get("session_state", {})
@@ -595,6 +606,7 @@ if __name__ == '__main__':
     app.on_startup.append(models.init_database)
     app.middlewares.extend((
         only_post_request_middleware,
+        ping_request_middleware,
         log_middleware,
         session_state_middleware
     ))
