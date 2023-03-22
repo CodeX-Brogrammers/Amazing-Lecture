@@ -454,7 +454,14 @@ async def handler_confirm_close_game(alice: AliceRequest):
 @dp.request_handler(state="*")
 async def handle_all(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Общий обработчик")
-    return alice.response("Извините, я вас не понимаю, повторите пожалуйста. ")
+    state = await dp.storage.get_state(alice.session.user_id)
+    if state == GameStates.GUESS_ANSWER:
+        text = "Извините, я вас не понимаю, выбирайте из доступных вариантов ответа. "
+    elif state == GameStates.FACT:
+        text = "Извините, я вас не понимаю, повторите пожалуйста. Вы даёте согласие или отказываетесь?"
+    else:
+        text = "Извините, я вас не понимаю, повторите пожалуйста. "
+    return alice.response(text)
 
 
 @dp.errors_handler()
@@ -497,7 +504,12 @@ async def session_state_middleware(request, handler):
     data = (await request.json())["state"]["session"]
     state = SessionState.parse_obj(data).dict()
     body = json.loads(response.body)
-    body["session_state"] = state | body.get("session_state", {})
+    body_state = body.get("session_state", {})
+    if isinstance(state, dict) and isinstance(body_state, dict):
+        body["session_state"] = state | body.get("session_state", {})
+    else:
+        body["session_state"] = state
+
     response.body = json.dumps(body)
     return response
 
