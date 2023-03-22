@@ -357,7 +357,10 @@ async def handler_true_answer(alice: AliceRequest, state: State):
     state.session.current_question = None
     return alice.response(
         " \n".join((answer.description.src, fact_text)),
-        tts=" \n".join((answer.description.tts, fact_text)),
+        tts=" \n".join((
+            '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/5a095b4c-4529-473e-acc4-5bb2e29c8235.opus">',
+            answer.description.tts, fact_text
+        )),
         buttons=[OK_Button, REJECT_Button]
     )
 
@@ -394,7 +397,9 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
     state.session.try_number += 1
     return alice.response(
         " \n".join((answer.description.src, *additional_text)),
-        tts=" \n".join((answer.description.tts, *additional_text)),
+        tts=" \n".join((
+            '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/17d961b9-64f1-4cbf-9c8b-c0ff959fbb30.opus">',
+            answer.description.tts, *additional_text)),
         buttons=buttons
     )
 
