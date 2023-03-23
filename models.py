@@ -16,6 +16,12 @@ class Diff:
     coincidence: float
 
 
+@dataclass(slots=True, frozen=True)
+class UserCheck:
+    diff: Optional[Diff] = None
+    is_true_answer: bool = False
+
+
 class Text(BaseModel):
     src: str
     tts: Optional[str]

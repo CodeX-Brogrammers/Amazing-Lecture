@@ -279,6 +279,12 @@ async def handler_hint(alice: AliceRequest, state: State, **kwargs):
         return alice.response(f"У вас уже закончились все подсказки. ")
 
     fsm_state = await dp.storage.get_state(alice.session.user_id)
+    if fsm_state.upper() == "FACT":
+        return alice.response(
+            f"У вас есть ещё {number_of_hints}  "
+            f"{nlu.declension_of_word_after_numeral('подсказка', number_of_hints)}. ",
+            buttons=[OK_Button, REJECT_Button]
+        )
     if "сколько" in user_tokens or "остаться" in user_tokens:
         logging.info(f"User: {alice.session.user_id}: Handler->Подсказка->Сколько осталось")
         buttons = []
@@ -291,16 +297,13 @@ async def handler_hint(alice: AliceRequest, state: State, **kwargs):
         )
 
     if last_response := (await dp.storage.get_data(alice.session.user_id)).get("last", None):
-        print(last_response)
         if isinstance(last_response, AliceResponse):
             if "Подсказка:  \n" in last_response.response.text:
                 last_response.response.text = last_response.response.text.rsplit("\n", 1)[0]
                 return last_response
         else:
             if "Подсказка:  \n" in last_response.get("response", {}).get("text", ""):
-                print(last_response["response"]["text"])
                 last_response["response"]["text"] = last_response["response"]["text"].rsplit("\n", 1)[0]
-                print(last_response["response"]["text"])
                 return last_response
 
     logging.info(f"User: {alice.session.user_id}: Handler->Подсказка->Отправка")
@@ -405,10 +408,13 @@ async def handler_reject_question(alice: AliceRequest, state: State, **kwargs):
 @dp.request_handler(state=GameStates.GUESS_ANSWER)
 @mixin_can_repeat
 async def handler_quess_answer(alice: AliceRequest):
-    is_true_answer, diff = nlu.check_user_answer(alice)
-    if is_true_answer:
+    result = nlu.check_user_answer(alice)
+    if not isinstance(result, models.UserCheck):
+        return await handler_answer_brute_force(alice)
+
+    if result.is_true_answer:
         return await handler_true_answer(alice)
-    return await handler_false_answer(alice, diff=diff)
+    return await handler_false_answer(alice, diff=result.diff)
 
 
 @mixin_appmetrica_log
@@ -432,6 +438,28 @@ async def handler_true_answer(alice: AliceRequest, state: State, **kwargs):
             answer.description.tts, fact_text
         )),
         buttons=[OK_Button, REJECT_Button]
+    )
+
+
+@mixin_appmetrica_log
+@mixin_state
+async def handler_answer_brute_force(alice: AliceRequest, state: State, **kwargs):
+    logging.info(f"User: {alice.session.user_id}: Handler->Перебор ответов")
+    await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
+
+    answers = repeat_answers(alice)
+    additional_text = ["Хорошая попытка, но попробуйте выбрать один из вариантов ответов. ", answers["text"]]
+    buttons = answers["buttons"]
+    if state.session.number_of_hints > 0 and state.session.try_number < 1:
+        additional_text.append("\nНапоминаю, что вы можете использовать подсказку. ")
+        buttons.append(HINT_Button)
+
+    return alice.response(
+        " \n".join(additional_text),
+        tts=" \n".join((
+            '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/17d961b9-64f1-4cbf-9c8b-c0ff959fbb30.opus"> ',
+            *additional_text)),
+        buttons=buttons
     )
 
 
