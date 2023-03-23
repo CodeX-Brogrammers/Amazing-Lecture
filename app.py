@@ -451,12 +451,12 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
     buttons = []
     if state.session.number_of_hints > 0 and state.session.try_number < 1:
         logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ")
-        additional_text.append("Попробуте ещё раз отгадать ответ. ")
+        additional_text.append("Попробуйте ещё раз отгадать ответ. ")
         additional_text.append("Напоминаю, что вы можете использовать подсказку. ")
         buttons.append(HINT_Button)
         buttons += repeat_answers(alice)["buttons"]
     elif state.session.number_of_hints <= 0 and state.session.try_number <= 1:
-        additional_text.append("Попробуте ещё раз отгадать ответ. ")
+        additional_text.append("Попробуйте ещё раз отгадать ответ. ")
         buttons += repeat_answers(alice)["buttons"]
     else:
         logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ 2 раза")
