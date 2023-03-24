@@ -1,19 +1,9 @@
-from operator import le, ge, lt, gt, eq
-from typing import Callable
 import enum
 
-from aioalice.dispatcher.filters import Filter, StateFilter
+from aioalice.dispatcher.filters import Filter, StateFilter, check_filter, AsyncFilter
 from aioalice.types import AliceRequest
 
 import nlu
-
-
-class Operation(enum.Enum):
-    LE = le
-    GE = ge
-    LT = lt
-    GT = gt
-    EQ = eq
 
 
 class StateType(enum.Enum):
@@ -25,6 +15,11 @@ class StateType(enum.Enum):
 def _check_included_intent_names(alice: AliceRequest, intent_names: list[str]):
     intents: dict = alice.request.nlu._raw_kwargs["intents"]
     return any([intent_name in intents.keys() for intent_name in intent_names])
+
+
+class NextFilter(Filter):
+    def check(self, alice: AliceRequest):
+        return _check_included_intent_names(alice, ["YANDEX.BOOK.NAVIGATION.NEXT"])
 
 
 class ConfirmFilter(Filter):
@@ -68,17 +63,6 @@ class StartFilter(Filter):
         return alice.session.new
 
 
-class ScoreFilter(Filter):
-    def __init__(self, operation: Operation, count: int, state_type: StateType = StateType.USER):
-        self.count = count
-        self.operation: Callable[[int, int], bool] = operation.value
-        self.state_type = state_type.value
-
-    def check(self, alice: AliceRequest):
-        score = alice._raw_kwargs["state"][self.state_type].get("score", 0)
-        return self.operation(score, self.count)
-
-
 class TextContainFilter(Filter):
     def __init__(self, initial_tokens: list[str]):
         self.init_tokens = nlu.lemmatize(initial_tokens)
@@ -97,3 +81,25 @@ class OneOfStatesFilter(StateFilter):
             return any([True for state in user_state if state in self.state])
         else:
             return user_state in self.state
+
+
+class OneOfFilter(AsyncFilter):
+    def __init__(self, *filters: Filter):
+        self.filters = filters
+
+    async def check(self, alice: AliceRequest):
+        for filter in self.filters:
+            if await check_filter(filter, (alice,)):
+                return True
+        return False
+
+
+class AndFilter(AsyncFilter):
+    def __init__(self, *filters: Filter):
+        self.filters = filters
+
+    async def check(self, alice: AliceRequest):
+        result = []
+        for filter in self.filters:
+            result.append(await check_filter(filter, (alice,)))
+        return all([result])

@@ -36,44 +36,6 @@ def calculate_coincidence(
     return len(input_tokens & source_tokens) / len(source_tokens)
 
 
-def calculate_correct_answer_by_number(
-        user_answer: str, answers: list[tuple[int, str]], threshold: float = 0.33) -> list[Diff]:
-    result = []
-    normalize_user_answer = set(lemmatize(tokenizer(user_answer)))
-    for answer in answers:
-        normalize_answer = set(str(answer[0]))
-        coincidence = calculate_coincidence(normalize_user_answer, normalize_answer)
-        if coincidence >= threshold:
-            result.append(
-                Diff(
-                    answer=answer[1],
-                    number=answer[0],
-                    coincidence=coincidence
-                )
-            )
-    result.sort(key=attrgetter("coincidence"), reverse=True)
-    return result
-
-
-def calculate_correct_answer_by_text(
-        user_answer: str, answers: list[tuple[int, str]], threshold: float = 0.33) -> list[Diff]:
-    result = []
-    normalize_user_answer = set(lemmatize(tokenizer(user_answer)))
-    for answer in answers:
-        normalize_answer = set(lemmatize(tokenizer(answer[1])))
-        coincidence = calculate_coincidence(normalize_user_answer, normalize_answer)
-        if coincidence >= threshold:
-            result.append(
-                Diff(
-                    answer=answer[1],
-                    number=answer[0],
-                    coincidence=coincidence
-                )
-            )
-    result.sort(key=attrgetter("coincidence"), reverse=True)
-    return result
-
-
 def find_occurrences(words: list[str], find_words: list[str], skip_index: set[int] = None) -> set:
     if skip_index is None:
         skip_index = set()
@@ -114,16 +76,67 @@ def remove_common_words(text_tokens: list[str], words: set[str]) -> list[str]:
     return result
 
 
+def remove_common_words_from_answers(
+        answers: list[tuple[int, str]],
+        concat: bool = False) -> list[tuple[int, Union[list[str], str]]]:
+    common_answers_words = find_common_words([value[1] for value in answers])
+    if concat:
+        return [
+            (answer[0],
+             " ".join(remove_common_words(lemmatize(tokenizer(answer[1])), common_answers_words)))
+            for answer in answers
+        ]
+    return [
+        (answer[0],
+         remove_common_words(lemmatize(tokenizer(answer[1])), common_answers_words))
+        for answer in answers
+    ]
+
+
+def calculate_correct_answer_by_number(
+        user_answer: str, answers: list[tuple[int, str]], threshold: float = 0.33) -> list[Diff]:
+    result = []
+    normalize_user_answer = set(lemmatize(tokenizer(user_answer)))
+    for answer in answers:
+        normalize_answer = set(str(answer[0]))
+        coincidence = calculate_coincidence(normalize_user_answer, normalize_answer)
+        if coincidence >= threshold:
+            result.append(
+                Diff(
+                    answer=answer[1],
+                    number=answer[0],
+                    coincidence=coincidence
+                )
+            )
+    result.sort(key=attrgetter("coincidence"), reverse=True)
+    return result
+
+
+def calculate_correct_answer_by_text(
+        user_answer: str, answers: list[tuple[int, str]], threshold: float = 0.33) -> list[Diff]:
+    result = []
+    normalize_user_answer = set(lemmatize(tokenizer(user_answer)))
+    for answer in answers:
+        normalize_answer = set(lemmatize(tokenizer(answer[1])))
+        coincidence = calculate_coincidence(normalize_user_answer, normalize_answer)
+        if coincidence >= threshold:
+            result.append(
+                Diff(
+                    answer=answer[1],
+                    number=answer[0],
+                    coincidence=coincidence
+                )
+            )
+    result.sort(key=attrgetter("coincidence"), reverse=True)
+    return result
+
+
 def clean_user_command(command: str, answers: list[tuple[int, str]]):
     user_answer_tokens = lemmatize(tokenizer(command))
     common_answers_words = find_common_words([value[1] for value in answers])
     result = remove_common_words(user_answer_tokens, common_answers_words)
 
-    _answers = [
-        (answer[0],
-         remove_common_words(lemmatize(tokenizer(answer[1])), common_answers_words))
-        for answer in answers
-    ]
+    _answers = remove_common_words_from_answers(answers)
 
     skip_index = set()
     text_enters = []
@@ -160,12 +173,13 @@ def check_user_answer(alice: AliceRequest) -> Union[UserCheck, list[Diff]]:
                 number=answer_number,
                 coincidence=0
             ))
-
+    # answers = remove_common_words_from_answers(state.session.current_answers, True)
+    answers = state.session.current_answers
     user_answer = clean_user_command(alice.request.command, state.session.current_answers)
     diffs = calculate_correct_answer_by_text(
-        user_answer, state.session.current_answers
+        user_answer, answers
     )
-    logging.info(f"Answer by text: {diffs};\nAnswers: {state.session.current_answers}")
+    logging.info(f"Answer by text: {diffs};\nAnswers: {state.session.current_answers} \nClean answers: {answers}")
     if len(diffs) == 1:
         diff = diffs[0]
         return UserCheck(
@@ -176,9 +190,9 @@ def check_user_answer(alice: AliceRequest) -> Union[UserCheck, list[Diff]]:
         return diffs
 
     diffs = calculate_correct_answer_by_number(
-        user_answer, state.session.current_answers
+        user_answer, answers
     )
-    logging.info(f"Answer by number: {diffs};\nAnswers: {state.session.current_answers}")
+    logging.info(f"Answer by number: {diffs};\nAnswers: {state.session.current_answers} \nClean answers: {answers}")
     if len(diffs) == 1:
         diff = diffs[0]
         return UserCheck(
@@ -208,3 +222,4 @@ if __name__ == '__main__':
     print(clean_user_command(answer, answers))
     print(time.time() - start)
     clean_user_command(answer, answers)
+    print(remove_common_words_from_answers(answers, concat=True))

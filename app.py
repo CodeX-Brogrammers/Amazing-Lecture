@@ -1,4 +1,3 @@
-import time
 from typing import Callable, Optional
 from random import choice, shuffle
 from functools import wraps
@@ -6,9 +5,9 @@ from os import getenv
 import logging
 import json
 
+from aioalice.types import AliceRequest, Button, AliceResponse
 from aioalice import Dispatcher, get_new_configured_app
 from aioalice.dispatcher.storage import MemoryStorage
-from aioalice.types import AliceRequest, Button, AliceResponse
 from aiohttp.web_request import Request
 from aiohttp.web_response import Response
 from beanie import PydanticObjectId
@@ -143,12 +142,23 @@ async def handle_can_do(alice: AliceRequest, **kwargs):
 @mixin_can_repeat
 async def handle_help(alice: AliceRequest, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Помощь")
-    answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие. " \
-             "Продвигаясь все дальше вы будете отвечать на вопросы и зарабатывать баллы. " \
-             "Погрузитесь в атмосферу Древнего Рима, Средневековья," \
-             " Эпохи Возрождения вместе с замечательным проводником Авророй Хисторией. "
-    state = await dp.storage.get_state(alice.session.user_id)
-    if state in ("DEFAULT_STATE", "*"):
+    fsm_state = await dp.storage.get_state(alice.session.user_id)
+    if fsm_state.upper() != "GUESS_ANSWER":
+        answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие. " \
+                 "Продвигаясь все дальше вы будете отвечать на вопросы и зарабатывать баллы. " \
+                 "Погрузитесь в атмосферу Древнего Рима, Средневековья," \
+                 " Эпохи Возрождения вместе с замечательным проводником Авророй Хисторией. "
+    else:
+        answer = "В данный момент вы можете попросить меня о следующем: \n" \
+                 "1. Повтори - повторю свой последний ответ \n" \
+                 "2. Повтори вопрос \n" \
+                 "3. Повтори ответы \n" \
+                 "4. Подсказка - дам вам подсказку на верный ответ \n" \
+                 "5. Сколько осталось подсказок \n" \
+                 "6. Пропустить вопрос - если вопрос сложный, то так уж и быть пропустим его \n" \
+                 "7. Выход - мы остановим лекцию и вы спокойно сможете идти по своим делам \n" \
+
+    if fsm_state in ("DEFAULT_STATE", "*"):
         answer = f"{answer}\n{choice(POSSIBLE_ANSWER)}"
     return alice.response(answer)
 
@@ -411,6 +421,32 @@ async def handler_question(alice: AliceRequest, state: State, **kwargs):
 @mixin_state
 async def handler_reject_question(alice: AliceRequest, state: State, **kwargs):
     return await handler_end(alice, state)
+
+
+@dp.request_handler(
+    filters.OneOfFilter(
+        filters.TextContainFilter(["следующий", "вопрос"]),
+        filters.TextContainFilter(["пропустить", "вопрос"]),
+        filters.NextFilter()
+    ),
+    state=GameStates.GUESS_ANSWER
+)
+@mixin_appmetrica_log
+async def handler_skip_question(alice: AliceRequest):
+    return await handler_question(alice)
+
+
+@dp.request_handler(
+    filters.OneOfFilter(
+        filters.TextContainFilter(["не", "знаю"]),
+        filters.TextContainFilter(["не", "могу"]),
+    ),
+    state=GameStates.GUESS_ANSWER
+)
+@mixin_appmetrica_log
+async def handler_dont_know_answer(alice: AliceRequest):
+    text = "Мы многого не знаем, попробуйте взять подсказку или перейдите на следующий вопрос. "
+    return alice.response(text)
 
 
 @dp.request_handler(state=GameStates.GUESS_ANSWER)
