@@ -199,10 +199,18 @@ async def repeat_question(alice: AliceRequest):
     )
 
 
+@dp.request_handler(filters.RestartFilter(), state="*")
+@mixin_appmetrica_log
+@mixin_state
+async def handler_restart(alice: AliceRequest, state: State, **kwargs):
+    state.session = SessionState()
+    return await handler_start(alice)
+
+
 @dp.request_handler(filters.StartFilter(), state="*")
 @mixin_appmetrica_log
 @mixin_can_repeat
-async def handle_start(alice: AliceRequest, **kwargs):
+async def handler_start(alice: AliceRequest, **kwargs):
     logging.info(f"Handler->Старт")
     await dp.storage.set_state(alice.session.user_id, GameStates.START)
     answer = "Уважаемые студенты, рада видеть вас на своей лекции. " \
@@ -468,8 +476,8 @@ async def handler_answer_brute_force(alice: AliceRequest, state: State, **kwargs
 async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff], state: State, **kwargs):
     # Получить ID вопроса из State-а
     # Если ответ неверный, предложить подсказку или отказаться
-    if diff is None:
-        return alice.response("Извините, я вас не понимаю, повторите пожалуйста")
+    if not diff:
+        return await handler_all(alice)
 
     await dp.storage.set_state(alice.session.user_id, state=GameStates.GUESS_ANSWER)
     question = await models.Question.get(PydanticObjectId(state.session.current_question))
@@ -554,11 +562,14 @@ async def handler_confirm_close_game(alice: AliceRequest, **kwargs):
 
 @dp.request_handler(state="*")
 @mixin_appmetrica_log
-async def handle_all(alice: AliceRequest):
+async def handler_all(alice: AliceRequest):
     logging.info(f"User: {alice.session.user_id}: Handler->Общий обработчик")
     state = await dp.storage.get_state(alice.session.user_id)
     if state == GameStates.GUESS_ANSWER:
-        text = "Извините, я вас не понимаю, выбирайте из доступных вариантов ответа. "
+        text = "Извините, я вас не понимаю, выбирайте из доступных вариантов ответа. \n"
+        answers = repeat_answers(alice)
+        text += answers["text"]
+        return alice.response(text, buttons=answers["buttons"])
     elif state == GameStates.FACT:
         text = "Извините, я вас не понимаю, повторите пожалуйста. Вы даёте согласие или отказываетесь?"
     else:
