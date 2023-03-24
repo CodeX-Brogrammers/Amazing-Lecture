@@ -29,7 +29,7 @@ def _check_included_intent_names(alice: AliceRequest, intent_names: list[str]):
 
 class ConfirmFilter(Filter):
     def check(self, alice: AliceRequest):
-        return _check_included_intent_names(alice, ["YANDEX.CONFIRM", "AGREE"])
+        return _check_included_intent_names(alice, ["YANDEX.CONFIRM", "YANDEX.BOOK.NAVIGATION.NEXT", "AGREE"])
 
 
 class RejectFilter(Filter):
