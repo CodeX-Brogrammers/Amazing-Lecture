@@ -143,7 +143,7 @@ async def handle_can_do(alice: AliceRequest, **kwargs):
 async def handle_help(alice: AliceRequest, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Помощь")
     fsm_state = await dp.storage.get_state(alice.session.user_id)
-    if fsm_state.upper() != "GUESS_ANSWER":
+    if fsm_state.upper() not in ("GUESS_ANSWER", "FACT", "QUESTION_TIME"):
         answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие. " \
                  "Продвигаясь все дальше вы будете отвечать на вопросы и зарабатывать баллы. " \
                  "Погрузитесь в атмосферу Древнего Рима, Средневековья," \
@@ -440,6 +440,9 @@ async def handler_skip_question(alice: AliceRequest):
     filters.OneOfFilter(
         filters.TextContainFilter(["не", "знаю"]),
         filters.TextContainFilter(["не", "могу"]),
+        filters.TextContainFilter(["сложно"]),
+        filters.TextContainFilter(["без", "понятия"]),
+        filters.TextContainFilter(["понятия", "не", "имею"]),
     ),
     state=GameStates.GUESS_ANSWER
 )
