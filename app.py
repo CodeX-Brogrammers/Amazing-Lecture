@@ -307,7 +307,7 @@ async def handler_start(alice: AliceRequest, state: State, **kwargs):
              "Я хочу поговорить с вами о том, как история может стать настоящей сказкой. " \
              "Что если я отправлю вас в настоящий мир фантазий и историй? " \
              "Я уже подготовила наш волшебный поезд. Чтобы начать лекцию просто скажите \"Поехали\". Готовы ли вы отправиться в это путешествие? "
-    alice.response_big_image(
+    return alice.response_big_image(
         answer,
         tts=answer + '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/9484707f-a9ae-4a1c-b8da-8111e026a9a8.opus">',
         image_id="213044/8caa36129ca6356f8981",
