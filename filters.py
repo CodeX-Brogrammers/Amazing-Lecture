@@ -71,7 +71,7 @@ class TextContainFilter(Filter):
         user_tokens = nlu.lemmatize(
             nlu.tokenizer(alice.request.command)
         )
-        return nlu.calculate_coincidence(user_tokens, self.init_tokens) > 0.33
+        return nlu.calculate_coincidence(user_tokens, self.init_tokens) > 0.75
 
 
 class OneOfStatesFilter(StateFilter):

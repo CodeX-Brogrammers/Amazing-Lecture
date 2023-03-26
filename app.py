@@ -18,16 +18,8 @@ import filters
 import models
 import nlu
 
-# Blank:
-# - звуковое сопровождение
-# - совместная игра
-# - свои вопросы
-# - Session state надо передавать в каждый запрос
-# - Повтори ответы
 
-# TODO:
-# | -> ответ на вопрос: сколько подсказок осталось
-# | -> ответ на команду: подсказка
+# TODO: хочу пропускать все интересные факты
 
 WEBHOOK_URL_PATH = '/post'  # webhook endpoint
 
@@ -41,8 +33,11 @@ OK_Button = Button('Да')
 REJECT_Button = Button('Нет')
 REPEAT_Button = Button('Повтори')
 YOU_CAN_Button = Button('Что ты умеешь ?')
+HELP_Button = Button('Помощь')
 HINT_Button = Button('Подсказка')
+NEXT_Button = Button('Следующий вопрос')
 BUTTONS = [OK_Button, REJECT_Button, REPEAT_Button, YOU_CAN_Button]
+GAME_BUTTONS = [HINT_Button, NEXT_Button, HELP_Button]
 
 POSSIBLE_ANSWER = ("Начинаем ?", "Готовы начать ?", "Поехали ?")
 CONTINUE_ANSWER = ("Продолжим ?", "Едем дальше ?")
@@ -157,12 +152,7 @@ async def handle_can_do(alice: AliceRequest, **kwargs):
 async def handle_help(alice: AliceRequest, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Помощь")
     fsm_state = await dp.storage.get_state(alice.session.user_id)
-    if fsm_state.upper() not in ("GUESS_ANSWER", "FACT", "QUESTION_TIME"):
-        answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие. " \
-                 "Продвигаясь все дальше вы будете отвечать на вопросы и зарабатывать баллы. " \
-                 "Погрузитесь в атмосферу Древнего Рима, Средневековья," \
-                 " Эпохи Возрождения вместе с замечательным проводником Авророй Хисторией. "
-    else:
+    if fsm_state.upper() in ("GUESS_ANSWER", "FACT", "QUESTION_TIME"):
         answer = "В данный момент вы можете попросить меня о следующем: \n" \
                  "1. Повтори - повторю свой последний ответ \n" \
                  "2. Повтори вопрос \n" \
@@ -170,9 +160,14 @@ async def handle_help(alice: AliceRequest, **kwargs):
                  "4. Подсказка - дам вам подсказку на верный ответ \n" \
                  "5. Сколько осталось подсказок \n" \
                  "6. Пропустить вопрос - если вопрос сложный, то так уж и быть пропустим его \n" \
-                 "7. Выход - мы остановим лекцию и вы спокойно сможете идти по своим делам \n" \
+                 "7. Выход - мы остановим лекцию и вы спокойно сможете идти по своим делам \n"
+        return alice.response(answer, buttons=GAME_BUTTONS)
 
-    if fsm_state in ("DEFAULT_STATE", "*"):
+    answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие. " \
+             "Продвигаясь все дальше вы будете отвечать на вопросы и зарабатывать баллы. " \
+             "Погрузитесь в атмосферу Древнего Рима, Средневековья," \
+             " Эпохи Возрождения вместе с замечательным проводником Авророй Хисторией. "
+    if fsm_state.upper() in ("DEFAULT_STATE", "*"):
         answer = f"{answer}\n{choice(POSSIBLE_ANSWER)}"
     return alice.response(answer)
 
@@ -262,7 +257,8 @@ def repeat_answers(alice: AliceRequest):
     buttons = [
         Button(
             title=text,
-            payload={"is_true": i == state.session.current_true_answer, "number": i}
+            payload={"is_true": i == state.session.current_true_answer, "number": i},
+            hide=False
         )
         for i, text in answers
     ]
@@ -356,7 +352,7 @@ async def handler_hint(alice: AliceRequest, state: State, **kwargs):
         tts=" \n".join((
             '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/026b63b2-162e-4d0a-a60a-735b10adb15f.opus">',
             "Подсказка: ", question.hint.tts, left_hints)),
-        buttons=answers["buttons"]
+        buttons=[*answers["buttons"], *GAME_BUTTONS]
     )
 
 
@@ -415,8 +411,9 @@ async def handler_question(alice: AliceRequest, state: State, **kwargs):
         *[f"{i}-й {answer.text.tts}" for i, answer in answers]
     ))
 
-    buttons = [Button(title=answer.text.src, payload={"is_true": answer.is_true, "number": i})
+    buttons = [Button(title=answer.text.src, payload={"is_true": answer.is_true, "number": i}, hide=False)
                for i, answer in answers]
+    buttons += GAME_BUTTONS
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
     state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
     state.session.try_number = 0
@@ -463,7 +460,7 @@ async def handler_skip_question(alice: AliceRequest):
 @mixin_appmetrica_log
 async def handler_dont_know_answer(alice: AliceRequest):
     text = "Мы многого не знаем, попробуйте взять подсказку или перейдите на следующий вопрос. "
-    return alice.response(text)
+    return alice.response(text, buttons=GAME_BUTTONS)
 
 
 @dp.request_handler(state=GameStates.GUESS_ANSWER)
@@ -511,6 +508,7 @@ async def handler_answer_brute_force(alice: AliceRequest, state: State, **kwargs
     answers = repeat_answers(alice)
     additional_text = ["Хорошая попытка, но попробуйте выбрать один из вариантов ответов. ", answers["text"]]
     buttons = answers["buttons"]
+    buttons += GAME_BUTTONS
     if state.session.number_of_hints > 0 and state.session.try_number < 1:
         additional_text.append("\nНапоминаю, что вы можете использовать подсказку. ")
         buttons.append(HINT_Button)
@@ -542,10 +540,11 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
         logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ")
         additional_text.append("Попробуйте ещё раз отгадать ответ. ")
         additional_text.append("Напоминаю, что вы можете использовать подсказку. ")
-        buttons.append(HINT_Button)
+        buttons += GAME_BUTTONS
         buttons += repeat_answers(alice)["buttons"]
     elif state.session.number_of_hints <= 0 and state.session.try_number <= 1:
         additional_text.append("Попробуйте ещё раз отгадать ответ. ")
+        buttons += GAME_BUTTONS[1:]
         buttons += repeat_answers(alice)["buttons"]
     else:
         logging.info(f"User: {alice.session.user_id}: Handler->Не отгадал ответ 2 раза")
@@ -565,7 +564,6 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
     )
 
 
-# TODO: хочу пропускать все интересные факты
 @dp.request_handler(filters.ConfirmFilter(), state=GameStates.FACT)
 @mixin_appmetrica_log
 @mixin_can_repeat
@@ -622,7 +620,7 @@ async def handler_all(alice: AliceRequest):
         text = "Извините, я вас не понимаю, выбирайте из доступных вариантов ответа. \n"
         answers = repeat_answers(alice)
         text += answers["text"]
-        return alice.response(text, buttons=answers["buttons"])
+        return alice.response(text, buttons=[*answers["buttons"], *GAME_BUTTONS])
     elif state == GameStates.FACT:
         text = "Извините, я вас не понимаю, повторите пожалуйста. Вы даёте согласие или отказываетесь?"
     else:

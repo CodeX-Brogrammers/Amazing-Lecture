@@ -10,6 +10,13 @@ from beanie import Document, Indexed, init_beanie, PydanticObjectId
 
 
 @dataclass(slots=True, frozen=True)
+class CleanAnswer:
+    src: str
+    clean: list[str]
+    number: int
+
+
+@dataclass(slots=True, frozen=True)
 class Diff:
     answer: str
     number: int
