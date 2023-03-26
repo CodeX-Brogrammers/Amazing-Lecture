@@ -13,6 +13,7 @@ class SessionState(BaseModel):
     number_of_hints: int = 5
     try_number: int = 0
     score: Optional[conint(ge=0)] = Field(0)
+    state: str = "*"
 
 
 class UserState(BaseModel):

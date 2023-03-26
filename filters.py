@@ -74,15 +74,6 @@ class TextContainFilter(Filter):
         return nlu.calculate_coincidence(user_tokens, self.init_tokens) > 0.75
 
 
-class OneOfStatesFilter(StateFilter):
-    async def check(self, alice: AliceRequest):
-        user_state = await self.dispatcher.storage.get_state(alice.session.user_id)
-        if isinstance(user_state, (list, set, tuple, frozenset)):
-            return any([True for state in user_state if state in self.state])
-        else:
-            return user_state in self.state
-
-
 class OneOfFilter(AsyncFilter):
     def __init__(self, *filters: Filter):
         self.filters = filters
@@ -103,3 +94,12 @@ class AndFilter(AsyncFilter):
         for filter in self.filters:
             result.append(await check_filter(filter, (alice,)))
         return all([result])
+
+
+class SessionState(Filter):
+    def __init__(self, state: str):
+        self.state = state
+
+    def check(self, alice: AliceRequest):
+        state = alice._raw_kwargs["state"].get("session", {}).get("state", "*")
+        return self.state == state
