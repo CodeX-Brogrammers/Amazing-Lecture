@@ -38,7 +38,7 @@ YOU_CAN_Button = Button('Что ты умеешь ?')
 HELP_Button = Button('Помощь')
 HINT_Button = Button('Подсказка')
 NEXT_Button = Button('Следующий вопрос')
-BUTTONS = [OK_Button, REJECT_Button, REPEAT_Button, YOU_CAN_Button]
+MENU_BUTTONS = [Button("Поехали", hide=False), Button("Помощь", hide=False), Button("Что ты умеешь ?", hide=False)]
 GAME_BUTTONS = [HINT_Button, NEXT_Button, HELP_Button]
 
 POSSIBLE_ANSWER = ("Начинаем ?", "Готовы начать ?", "Поехали ?")
@@ -201,12 +201,14 @@ async def handler_help(alice: AliceRequest, state: State, **kwargs):
             ]
         )
 
+    # TODO: Заменить базовый текст помощи, он не напоминает помощь
     answer = "Навык \"Удивительная лекция\" отправит вас в увлекательное путешествие. " \
              "Продвигаясь все дальше вы будете отвечать на вопросы и зарабатывать баллы. " \
              "Погрузитесь в атмосферу Древнего Рима, Средневековья," \
              " Эпохи Возрождения вместе с замечательным проводником Авророй Хисторией. "
-    if fsm_state.upper() in ("DEFAULT_STATE", "*"):
+    if fsm_state.upper() in ("START", "*"):
         answer = f"{answer}\n{choice(POSSIBLE_ANSWER)}"
+        return alice.response(answer, buttons=MENU_BUTTONS)
     return alice.response(answer)
 
 
@@ -311,7 +313,7 @@ async def handler_start(alice: AliceRequest, state: State, **kwargs):
         answer,
         tts=answer + '<speaker audio="dialogs-upload/97e0871e-cf33-4da5-9146-a8fa353b965e/9484707f-a9ae-4a1c-b8da-8111e026a9a8.opus">',
         image_id="213044/8caa36129ca6356f8981",
-        buttons=BUTTONS,
+        buttons=MENU_BUTTONS,
         title="",
         description=answer
     )
