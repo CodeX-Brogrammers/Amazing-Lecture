@@ -387,13 +387,14 @@ async def handler_hint(alice: AliceRequest, state: State, **kwargs):
 
     if last_response := (await dp.storage.get_data(alice.session.user_id)).get(RepeatKey.HINT, None):
         if isinstance(last_response, AliceResponse):
-            if "Подсказка:  \n" in last_response.response.text:
+            if "У вас есть ещё " in last_response.response.text:
                 last_response.response.text = last_response.response.text.rsplit("\n", 1)[0]
                 return last_response
         else:
-            if "Подсказка:  \n" in last_response.get("response", {}).get("text", ""):
+            if "У вас есть ещё " in last_response.get("response", {}).get("text", ""):
                 last_response["response"]["text"] = last_response["response"]["text"].rsplit("\n", 1)[0]
                 return last_response
+        return last_response
 
     logging.info(f"User: {alice.session.user_id}: Handler->Подсказка->Отправка")
     await dp.storage.set_state(
