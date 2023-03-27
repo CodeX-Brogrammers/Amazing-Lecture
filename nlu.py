@@ -164,13 +164,18 @@ def check_user_answer(alice: AliceRequest) -> Union[UserCheck, list[Diff]]:
     if alice.request.type == "ButtonPressed":
         logging.info(f"Answer button clicked")
         answer_number = alice.request.payload["number"]
-        return UserCheck(
-            is_true_answer=alice.request.payload.get("is_true", False),
-            diff=Diff(
-                answer=state.session.current_answers[answer_number - 1][1],
-                number=answer_number,
-                coincidence=0
-            ))
+        if " ".join(alice.request.nlu.tokens) in [
+            answer[1].replace("-", " ").lower() for answer in state.session.current_answers]:
+            return UserCheck(
+                is_true_answer=alice.request.payload.get("is_true", False),
+                diff=Diff(
+                    answer=state.session.current_answers[answer_number - 1][1],
+                    number=answer_number,
+                    coincidence=0
+                ))
+        else:
+            return UserCheck()
+
     answers = remove_common_words_from_answers(state.session.current_answers)
     user_answer = clean_user_command(alice.request.command, answers)
     diffs = calculate_correct_answer_by_text(
