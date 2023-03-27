@@ -84,7 +84,9 @@ def mixin_can_repeat(key: RepeatKey = None):
                 alice.session.user_id, data
             )
             return response
+
         return wrapper
+
     return inner
 
 
@@ -227,7 +229,11 @@ def repeat_answers(alice: AliceRequest):
     buttons = [
         Button(
             title=text,
-            payload={"is_true": i == state.session.current_true_answer, "number": i},
+            payload={
+                "is_true": i == state.session.current_true_answer,
+                "number": i,
+                "text": text
+            },
             hide=False
         )
         for i, text in answers
@@ -493,8 +499,17 @@ async def handler_question(alice: AliceRequest, state: State, **kwargs):
         *[f"{i}-й {answer.text.tts}" for i, answer in answers]
     ))
 
-    buttons = [Button(title=answer.text.src, payload={"is_true": answer.is_true, "number": i}, hide=False)
-               for i, answer in answers]
+    buttons = [
+        Button(
+            title=answer.text.src,
+            payload={
+                "is_true": answer.is_true,
+                "number": i,
+                "text": answer.text.src
+            },
+            hide=False
+        )
+        for i, answer in answers]
     buttons += GAME_BUTTONS
     state.session.current_answers = [(i, answer.text.src) for i, answer in answers]
     state.session.current_true_answer = [i for i, answer in answers if answer.is_true][0]
