@@ -749,6 +749,7 @@ async def handler_all(alice: AliceRequest, state: State):
         return alice.response(text, buttons=[*answers["buttons"], *GAME_BUTTONS])
     elif _state == GameStates.FACT:
         text = "Извините, я вас не понимаю, повторите пожалуйста. Вы даёте согласие или отказываетесь?"
+        return alice.response(text, buttons=[OK_Button, REJECT_Button])
     else:
         text = "Извините, я вас не понимаю, повторите пожалуйста. "
     return alice.response(text)
