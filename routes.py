@@ -1,33 +1,20 @@
-from typing import Callable, Optional, Union
 from random import choice, shuffle
-from functools import wraps
-from os import getenv
+from typing import Optional
 import logging
-import json
-import enum
 
 from aioalice.types import AliceRequest, Button, AliceResponse
-from aioalice import Dispatcher, get_new_configured_app
 from aioalice.dispatcher.storage import MemoryStorage
-from aiohttp.web_request import Request
-from aiohttp.web_response import Response
 from beanie import PydanticObjectId
-from aiohttp import web
+from aioalice import Dispatcher
 
-from state import State, SessionState, GameStates
+
+from mixin import mixin_appmetrica_log, mixin_can_repeat, mixin_state
+from state import State, GameStates
+from models import RepeatKey
 import filters
 import models
 import nlu
 
-# TODO: хочу пропускать все интересные факты
-
-WEBHOOK_URL_PATH = '/post'  # webhook endpoint
-
-WEBAPP_HOST = getenv("APP_ADDRESS", "localhost")
-WEBAPP_PORT = 5000
-
-logging.basicConfig(format=u'%(filename)s [LINE:%(lineno)d] #%(levelname)-8s [%(asctime)s]  %(message)s',
-                    level=logging.INFO)
 
 OK_Button = Button('Да')
 REJECT_Button = Button('Нет')
@@ -46,15 +33,6 @@ CONTINUE_ANSWER = ("Продолжим ?", "Едем дальше ?")
 FACT_ANSWER = ("Хотите послушать интересный факт ?",)
 
 
-class RepeatKey(enum.Enum):
-    LAST = "last"
-    HINT = "hint"
-    QUESTION = "question"
-
-
-# Создаем экземпляр диспетчера и подключаем хранилище в памяти
-
-
 class HybridStorage(MemoryStorage):
     async def get_state(self, user_id, alice_state: State = None):
         if alice_state is None:
@@ -68,103 +46,11 @@ class HybridStorage(MemoryStorage):
 
 
 dp = Dispatcher(storage=HybridStorage())
-app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
-
-
-def mixin_can_repeat(key: RepeatKey = None):
-    def inner(func: Callable):
-        @wraps(func)
-        async def wrapper(alice: AliceRequest, *args, **kwargs):
-            response = await func(alice, *args, **kwargs)
-            data = {"last": response, "last_func": func.__name__}
-            if key:
-                data[key] = response
-
-            await dp.storage.set_data(
-                alice.session.user_id, data
-            )
-            return response
-
-        return wrapper
-
-    return inner
-
-
-def mixin_state(func: Callable):
-    @wraps(func)
-    async def wrapper(alice: AliceRequest, *args, **kwargs):
-        state = State.from_request(alice)
-        data = await func(alice, *args, state=state, **kwargs)
-        if isinstance(data, dict):
-            temp = data.copy()
-            temp.pop("analytics")
-            response = AliceResponse(**temp)
-        else:
-            response = data
-
-        response.session_state = response.session_state | state.session.dict()
-        response.user_state_update = response.user_state_update | state.user.dict()
-        response.application_state = response.application_state | state.application
-        if isinstance(data, AliceResponse):
-            return response
-        else:
-            response = response.to_json()
-            if events := data.get("analytics", {}).get("events", {}):
-                if response.get("analytics", {}):
-                    response["analytics"]["events"] += events
-                else:
-                    response["analytics"] = {}
-                    response["analytics"]["events"] = events
-
-            return response
-
-    return wrapper
-
-
-def mixin_appmetrica_log(func: Callable):
-    @wraps(func)
-    async def wrapper(alice: AliceRequest, *args, **kwargs):
-        state = State.from_request(alice)
-        game_state = await dp.storage.get_state(alice.session.user_id, state)
-        response: AliceResponse = await func(alice, *args, **kwargs)
-        if isinstance(response, AliceResponse):
-            response: dict = response.to_json()
-        analytics = {
-            "events": [
-                {
-                    "name": func.__name__,
-                    "value": {
-                        "user": {
-                            "id": alice.session.user_id,
-                            "command": alice.request.command,
-                            "intents": alice.request.nlu._raw_kwargs["intents"]
-                        },
-                        "game": {
-                            "current_true_answer": state.session.current_true_answer,
-                            "current_question_id": state.session.current_question,
-                            "current_answers": state.session.current_answers,
-                            "question_passed": state.session.question_passed,
-                            "number_of_hints": state.session.number_of_hints,
-                            "try_number": state.session.try_number,
-                            "score": state.session.score,
-                        },
-                        "state": game_state
-                    }
-                }
-            ]
-        }
-        if response.get("analytics", {}).get("events", {}):
-            response["analytics"]["events"] += analytics["events"]
-        else:
-            response["analytics"] = analytics
-        return response
-
-    return wrapper
 
 
 @dp.request_handler(filters.CanDoFilter(), state="*")
-@mixin_appmetrica_log
-@mixin_can_repeat()
+@mixin_appmetrica_log(dp)
+@mixin_can_repeat(dp)
 @mixin_state
 async def handler_can_do(alice: AliceRequest, state: State, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Что ты умеешь")
@@ -172,14 +58,16 @@ async def handler_can_do(alice: AliceRequest, state: State, **kwargs):
              "Для успешного прохождения навыка вам нужно ответить верно как можно больше раз. " \
              "У вас есть  возможность взять подсказку для вопроса, но количество подсказок ограничено."
     _state = await dp.storage.get_state(alice.session.user_id, state)
-    if _state in ("DEFAULT_STATE", "*"):
+    if _state.upper() in ("DEFAULT_STATE", "*"):
+        answer = f"{answer}\n{choice(POSSIBLE_ANSWER)}"
+    if _state.upper() == "FACT":
         answer = f"{answer}\n{choice(POSSIBLE_ANSWER)}"
     return alice.response(answer)
 
 
 @dp.request_handler(filters.HelpFilter(), state="*")
-@mixin_appmetrica_log
-@mixin_can_repeat()
+@mixin_appmetrica_log(dp)
+@mixin_can_repeat(dp)
 @mixin_state
 async def handler_help(alice: AliceRequest, state: State, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Помощь")
@@ -262,7 +150,7 @@ async def repeat_question(alice: AliceRequest):
 
 # Обработчик повторения последней команды
 @dp.request_handler(filters.RepeatFilter(), state="*")
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 @mixin_state
 async def handler_repeat(alice: AliceRequest, state: State):
     _state = await dp.storage.get_state(alice.session.user_id, state)
@@ -293,14 +181,14 @@ async def handler_repeat(alice: AliceRequest, state: State):
 
 
 @dp.request_handler(filters.RestartFilter(), state="*")
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 async def handler_restart(alice: AliceRequest, **kwargs):
     return await handler_start(alice)
 
 
 @dp.request_handler(filters.StartFilter(), state="*")
-@mixin_appmetrica_log
-@mixin_can_repeat()
+@mixin_appmetrica_log(dp)
+@mixin_can_repeat(dp)
 @mixin_state
 async def handler_start(alice: AliceRequest, state: State, **kwargs):
     logging.info(f"Handler->Старт")
@@ -326,8 +214,8 @@ async def handler_start(alice: AliceRequest, state: State, **kwargs):
 
 
 @dp.request_handler(filters.EndFilter(), state="*")
-@mixin_can_repeat()
-@mixin_appmetrica_log
+@mixin_can_repeat(dp)
+@mixin_appmetrica_log(dp)
 async def handler_end(alice: AliceRequest, state: State = None, **kwargs):
     if state is None:
         state = State.from_request(alice)
@@ -360,8 +248,8 @@ async def handler_end(alice: AliceRequest, state: State = None, **kwargs):
     ),
     state="*"
 )
-@mixin_appmetrica_log
-@mixin_can_repeat(RepeatKey.HINT)
+@mixin_appmetrica_log(dp)
+@mixin_can_repeat(dp, RepeatKey.HINT)
 @mixin_state
 async def handler_hint(alice: AliceRequest, state: State, **kwargs):
     # Получить ID вопроса из State-а
@@ -433,8 +321,8 @@ async def handler_hint(alice: AliceRequest, state: State, **kwargs):
     filters.SessionState(GameStates.START),
     state="*"
 )
-@mixin_appmetrica_log
-@mixin_can_repeat()
+@mixin_appmetrica_log(dp)
+@mixin_can_repeat(dp)
 async def handler_start_game(alice: AliceRequest, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Начать игру")
     return await handler_question(alice)
@@ -446,7 +334,7 @@ async def handler_start_game(alice: AliceRequest, **kwargs):
     filters.SessionState(GameStates.START),
     state="*"
 )
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 async def handler_reject_game(alice: AliceRequest, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Отмена игры")
     answer = "Было приятно видеть вас на моей лекции. Заходите почаще, всегда рада."
@@ -458,8 +346,8 @@ async def handler_reject_game(alice: AliceRequest, **kwargs):
     filters.SessionState(GameStates.QUESTION_TIME),
     state="*"
 )
-@mixin_appmetrica_log
-@mixin_can_repeat(RepeatKey.QUESTION)
+@mixin_appmetrica_log(dp)
+@mixin_can_repeat(dp, RepeatKey.QUESTION)
 @mixin_state
 async def handler_question(alice: AliceRequest, state: State, **kwargs):
     # Получить случайный вопрос
@@ -529,7 +417,7 @@ async def handler_question(alice: AliceRequest, state: State, **kwargs):
     filters.SessionState(GameStates.QUESTION_TIME),
     state="*"
 )
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 @mixin_state
 async def handler_reject_question(alice: AliceRequest, state: State, **kwargs):
     return await handler_end(alice, state)
@@ -544,7 +432,7 @@ async def handler_reject_question(alice: AliceRequest, state: State, **kwargs):
     filters.SessionState(GameStates.GUESS_ANSWER),
     state="*"
 )
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 async def handler_skip_question(alice: AliceRequest):
     return await handler_question(alice)
 
@@ -560,7 +448,7 @@ async def handler_skip_question(alice: AliceRequest):
     filters.SessionState(GameStates.GUESS_ANSWER),
     state="*"
 )
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 async def handler_dont_know_answer(alice: AliceRequest):
     text = "Мы многого не знаем, попробуйте взять подсказку или перейдите на следующий вопрос. "
     return alice.response(text, buttons=GAME_BUTTONS)
@@ -570,7 +458,7 @@ async def handler_dont_know_answer(alice: AliceRequest):
     filters.SessionState(GameStates.GUESS_ANSWER),
     state="*"
 )
-@mixin_can_repeat()
+@mixin_can_repeat(dp)
 async def handler_quess_answer(alice: AliceRequest):
     result = nlu.check_user_answer(alice)
     if not isinstance(result, models.UserCheck):
@@ -581,7 +469,7 @@ async def handler_quess_answer(alice: AliceRequest):
     return await handler_false_answer(alice, diff=result.diff)
 
 
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 @mixin_state
 async def handler_true_answer(alice: AliceRequest, state: State, **kwargs):
     # Получить ID вопроса из State-а
@@ -609,7 +497,7 @@ async def handler_true_answer(alice: AliceRequest, state: State, **kwargs):
     )
 
 
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 @mixin_state
 async def handler_answer_brute_force(alice: AliceRequest, state: State, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Перебор ответов")
@@ -636,7 +524,7 @@ async def handler_answer_brute_force(alice: AliceRequest, state: State, **kwargs
     )
 
 
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 @mixin_state
 async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff], state: State, **kwargs):
     # Получить ID вопроса из State-а
@@ -690,8 +578,8 @@ async def handler_false_answer(alice: AliceRequest, diff: Optional[models.Diff],
     filters.ConfirmFilter(),
     filters.SessionState(GameStates.FACT),
     state="*")
-@mixin_appmetrica_log
-@mixin_can_repeat()
+@mixin_appmetrica_log(dp)
+@mixin_can_repeat(dp)
 @mixin_state
 async def handler_fact_confirm(alice: AliceRequest, state: State, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Отправка факта")
@@ -718,8 +606,8 @@ async def handler_fact_confirm(alice: AliceRequest, state: State, **kwargs):
     filters.SessionState(GameStates.FACT),
     state="*"
 )
-@mixin_appmetrica_log
-@mixin_can_repeat()
+@mixin_appmetrica_log(dp)
+@mixin_can_repeat(dp)
 async def handler_fact_reject(alice: AliceRequest, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Отказ от факта")
     return await handler_question(alice)
@@ -730,7 +618,7 @@ async def handler_fact_reject(alice: AliceRequest, **kwargs):
     filters.SessionState(GameStates.END),
     state="*"
 )
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 async def handler_restart_game(alice: AliceRequest, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Перезапуск игры")
     alice._raw_kwargs["state"]["session"] = {}
@@ -742,7 +630,7 @@ async def handler_restart_game(alice: AliceRequest, **kwargs):
     filters.SessionState(GameStates.END),
     state="*"
 )
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 async def handler_confirm_close_game(alice: AliceRequest, **kwargs):
     logging.info(f"User: {alice.session.user_id}: Handler->Завершение игры")
     text = "До новых встреч 👋"
@@ -753,7 +641,7 @@ async def handler_confirm_close_game(alice: AliceRequest, **kwargs):
 
 
 @dp.request_handler(state="*")
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 @mixin_state
 async def handler_all(alice: AliceRequest, state: State):
     logging.info(f"User: {alice.session.user_id}: Handler->Общий обработчик")
@@ -772,75 +660,7 @@ async def handler_all(alice: AliceRequest, state: State):
 
 
 @dp.errors_handler()
-@mixin_appmetrica_log
+@mixin_appmetrica_log(dp)
 async def the_only_errors_handler(alice, e):
     logging.error('An error!', exc_info=e)
     return alice.response('Кажется что-то пошло не так. ')
-
-
-@web.middleware
-async def only_post_request_middleware(request: Request, handler):
-    if request.method.upper() != "POST":
-        return Response(status=403)
-    return await handler(request)
-
-
-@web.middleware
-async def ping_request_middleware(request: Request, handler):
-    data = await request.json()
-    if data.get("request", {}).get("original_utterance", None) == "ping":
-        return web.json_response({"text": "pong"})
-    return await handler(request)
-
-
-@web.middleware
-async def log_middleware(request: Request, handler):
-    data = await request.json()
-    _request = data["request"]
-    user_id = data.get('session', {}).get('user_id', 0)
-    user_fsm_state = data.get("state", {}).get("session", {}).get("state", None)
-    logging.info(
-        f"User ({user_id}) enter"
-        f"\nCommand: {_request.get('command', None)}"
-        f"\nToken: {_request.get('nlu', {}).get('tokens', None)}"
-        f"\nIntents: {_request.get('nlu', {}).get('intents', None)}"
-        f"\nFSM State: {user_fsm_state}"
-    )
-    response = await handler(request)
-    logging.info(
-        f"User ({user_id}) exit"
-        f"\nFSM State: {user_fsm_state}"
-    )
-    return response
-
-
-@web.middleware
-async def session_state_middleware(request, handler):
-    response = await handler(request)
-    data = (await request.json()).get("state", {}).get("session", {})
-    if not data:
-        return response
-
-    state = SessionState.parse_obj(data).dict()
-    body = json.loads(response.body)
-    body_state = body.get("session_state", {})
-    if isinstance(state, dict) and isinstance(body_state, dict):
-        body["session_state"] = state | body.get("session_state", {})
-    else:
-        body["session_state"] = state
-
-    response.body = json.dumps(body)
-    return response
-
-
-if __name__ == '__main__':
-    app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_URL_PATH)
-    app.router.add_route("*", "/{tail:.*}", lambda _: Response(status=403))
-    app.on_startup.append(models.init_database)
-    app.middlewares.extend((
-        only_post_request_middleware,
-        ping_request_middleware,
-        log_middleware,
-        session_state_middleware
-    ))
-    web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT, loop=dp.loop)

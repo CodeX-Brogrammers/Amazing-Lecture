@@ -218,7 +218,7 @@ if __name__ == '__main__':
     import time
 
     print("start")
-    start = time.time()
+    start = time.perf_counter()
     user_answer = "думаю это рыцари матильцы"
     answers = [(i, answer) for i, answer in enumerate([
         "Рыцари-тевроны и рыцари-матильцы", "Мусульманские воины и крестоносцы из Европы", "Рыцари-тамплиеры и рыцари-оспиталиеры"], 1)]
@@ -227,10 +227,10 @@ if __name__ == '__main__':
     clean_user_answer = clean_user_command(user_answer, clean_answers)
     print("Clean user answer", clean_user_answer)
     print("Clean answers", clean_answers)
-    print(round(time.time() - start, 3))
+    print(round(time.perf_counter() - start, 3))
     print()
 
-    start = time.time()
+    start = time.perf_counter()
     user_answer = "это точно не битва при бородино это битва при ватерлоо или аустерлице"
     answers = [(i, answer) for i, answer in enumerate([
         "битва при аустерлице", "битва при бородино", "битва при ватерлоо"], 1)]
@@ -239,4 +239,4 @@ if __name__ == '__main__':
     clean_user_answer = clean_user_command(user_answer, clean_answers)
     print("Clean user answer", clean_user_answer)
     print("Clean answers", clean_answers)
-    print(round(time.time() - start, 3))
+    print(round(time.perf_counter() - start, 3))

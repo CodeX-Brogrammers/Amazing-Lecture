@@ -2,11 +2,19 @@ from dataclasses import dataclass
 from typing import Optional, Union
 from os import getenv
 import asyncio
-
-from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, conlist, root_validator, Field
+import enum
 
 from beanie import Document, Indexed, init_beanie, PydanticObjectId
+from pydantic import BaseModel, conlist, model_validator, Field
+from motor.motor_asyncio import AsyncIOMotorClient
+
+from settings import settings
+
+
+class RepeatKey(enum.Enum):
+    LAST = "last"
+    HINT = "hint"
+    QUESTION = "question"
 
 
 @dataclass(slots=True, frozen=True)
@@ -33,7 +41,7 @@ class Text(BaseModel):
     src: str
     tts: Optional[str]
 
-    @root_validator(pre=True)
+    @model_validator(mode='before')
     def check_tts(cls, kwargs: dict):
         if kwargs.get("tts", None) is None:
             kwargs["tts"] = kwargs["src"]
@@ -87,7 +95,7 @@ class Question(Document):
     full_text: Text
     short_text: Text
     hint: Text
-    answers: conlist(Answer, max_items=3)
+    answers: conlist(Answer, max_length=3)
     image: Optional[Image]
     fact: Text
 
@@ -96,14 +104,14 @@ class Question(Document):
 
 
 async def init_database(*_):
-    client = AsyncIOMotorClient(getenv("MONGO_URL"))
+    client = AsyncIOMotorClient(settings.mongodb_url)
     await init_beanie(database=client["QUEST"], document_models=[Question, UserData])
 
 
 # This is an asynchronous example, so we will access it from an async function
 async def example():
     # Beanie uses Motor async client under the hood
-    client = AsyncIOMotorClient(getenv("MONGO_URL"))
+    client = AsyncIOMotorClient(settings.mongodb_url)
     ids = [
         PydanticObjectId("640dd396fda67cd71b9c9f3a"),
         PydanticObjectId("640dd396fda67cd71b9c9f39"),
