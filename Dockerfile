@@ -20,4 +20,4 @@ COPY *.py .
 
 RUN pip install --no-cache /wheels/*
 
-CMD ["gunicorn", "main:app", "--bind", "0.0.0.0:3000", "--workers", "4", "--worker-class", "aiohttp.GunicornWebWorker"]
+CMD ["gunicorn", "main:app", "--bind", "0.0.0.0:3000", "--workers", "1", "--worker-class", "aiohttp.GunicornWebWorker"]
